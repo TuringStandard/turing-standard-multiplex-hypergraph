@@ -1,0 +1,35 @@
+services:
+  falkordb:
+    image: falkordb/falkordb-server:v4.20.1
+    container_name: mhrag-falkordb
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkor_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:89-1.9
+    container_name: mhrag-tei
+    command: ["--model-id", "BAAI/bge-m3", "--max-batch-tokens", "16384"]
+    ports:
+      - "8080:80"
+    volumes:
+      - tei_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  falkor_data:
+  tei_data:
