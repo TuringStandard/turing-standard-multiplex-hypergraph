@@ -1,0 +1,69 @@
+{
+  "insulin": {
+    "entities": [
+      {"name": "Insulin", "type": "CHEMICAL"},
+      {"name": "pancreatic beta cells", "type": "CONCEPT"},
+      {"name": "blood glucose", "type": "CHEMICAL"}
+    ],
+    "triples": [
+      {
+        "source": "pancreatic beta cells",
+        "relation": "releases",
+        "target": "Insulin",
+        "confidence": 0.98
+      },
+      {
+        "source": "Insulin",
+        "relation": "lowers",
+        "target": "blood glucose",
+        "confidence": 0.99
+      }
+    ]
+  },
+  "empty": {
+    "entities": [],
+    "triples": []
+  },
+  "crp": {
+    "entities": [
+      {"name": "CRP", "type": "CHEMICAL"},
+      {"name": "severe COVID-19", "type": "DISEASE"}
+    ],
+    "triples": [
+      {
+        "source": "CRP",
+        "relation": "associated_with",
+        "target": "severe COVID-19",
+        "confidence": 0.86
+      }
+    ]
+  },
+  "sample_a": {
+    "entities": [
+      {"name": "Sample Document", "type": "PRODUCT"},
+      {"name": "First Section", "type": "CONCEPT"}
+    ],
+    "triples": [
+      {
+        "source": "Sample Document",
+        "relation": "contains",
+        "target": "First Section",
+        "confidence": 0.9
+      }
+    ]
+  },
+  "sample_b": {
+    "entities": [
+      {"name": "Lorentz Group", "type": "CONCEPT"},
+      {"name": "Spacetime Symmetries", "type": "CONCEPT"}
+    ],
+    "triples": [
+      {
+        "source": "Lorentz Group",
+        "relation": "is_part_of",
+        "target": "Spacetime Symmetries",
+        "confidence": 0.95
+      }
+    ]
+  }
+}
