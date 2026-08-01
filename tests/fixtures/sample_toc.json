@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "document_title": "Sample Document",
+  "source": "manual",
+  "entries": [
+    {
+      "id": "sec-1",
+      "level": 1,
+      "number": "1",
+      "title": "First Section",
+      "title_path": ["First Section"],
+      "page_start": 2,
+      "page_end": 2,
+      "match": {
+        "heading_text": "1 First Section",
+        "normalized_key": "1 first section",
+        "strategy": "exact_normalized"
+      },
+      "children": []
+    },
+    {
+      "id": "sec-2",
+      "level": 1,
+      "number": "2",
+      "title": "Second Section",
+      "title_path": ["Second Section"],
+      "page_start": 2,
+      "page_end": 2,
+      "match": {
+        "heading_text": "2 Second Section",
+        "normalized_key": "2 second section",
+        "strategy": "exact_normalized"
+      },
+      "children": ["sec-2-1"]
+    },
+    {
+      "id": "sec-2-1",
+      "level": 2,
+      "number": "2.1",
+      "title": "Nested Topic",
+      "title_path": ["Second Section", "Nested Topic"],
+      "page_start": 2,
+      "page_end": 2,
+      "parent_id": "sec-2",
+      "match": {
+        "heading_text": "2.1 Nested Topic",
+        "normalized_key": "2.1 nested topic",
+        "strategy": "exact_normalized"
+      },
+      "children": []
+    },
+    {
+      "id": "sec-3",
+      "level": 1,
+      "number": "3",
+      "title": "Third Section",
+      "title_path": ["Third Section"],
+      "page_start": 2,
+      "page_end": 2,
+      "match": {
+        "heading_text": "3 Third Section",
+        "normalized_key": "3 third section",
+        "strategy": "exact_normalized"
+      },
+      "children": []
+    }
+  ]
+}
