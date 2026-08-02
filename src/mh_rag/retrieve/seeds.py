@@ -397,6 +397,21 @@ def _top_cluster_seeds(
     return out
 
 
+def cluster_restart_share(
+    globality: float,
+    settings: Settings,
+    *,
+    has_clusters: bool,
+) -> float:
+    """Cluster pool mass: ``min(cap, slope * G)`` when clusters attach; else 0."""
+    if not has_clusters:
+        return 0.0
+    return min(
+        float(settings.shadow_cluster_restart_share),
+        float(settings.shadow_cluster_share_slope) * float(globality),
+    )
+
+
 def _try_shadow_seeds(
     *,
     store: GraphStore,
@@ -406,6 +421,7 @@ def _try_shadow_seeds(
     settings: Settings,
     memberships: list[tuple[str, float]],
     cluster_seeds: list[Seed],
+    cluster_share: float,
 ) -> list[Seed] | None:
     """Build Core + gated anchors (+ clusters) with pool mass; None → legacy.
 
@@ -430,15 +446,13 @@ def _try_shadow_seeds(
     )[:n_anchors]
 
     use_clusters = bool(cluster_seeds)
-    cluster_share = (
-        float(settings.shadow_cluster_restart_share) if use_clusters else 0.0
-    )
+    share = float(cluster_share) if use_clusters else 0.0
     merged = merge_restart_pools(
         core,
         anchors,
         list(cluster_seeds) if use_clusters else [],
         core_share=float(settings.shadow_core_restart_share),
-        cluster_share=cluster_share,
+        cluster_share=share,
     )
     if settings.hyperedge_channel_enabled:
         hedge = cooccurrence_entity_seeds(store, query_vec, settings)
@@ -478,19 +492,22 @@ def select_seeds(
     beam: int,
     l3_available: bool,
     query_embedding: NDArray | None = None,
+    globality: float = 0.5,
+    l3_memberships: list[tuple[str, float]] | None = None,
+    l3_state: str | None = None,
+    cluster_version: int | None = None,
 ) -> tuple[list[Seed], str, str, int, NDArray[np.float32]]:
     """Select seeds for ``regime``.
 
     Embeds ``question`` unless ``query_embedding`` is provided (pipeline embeds
-    once for globality + seeds).
+    once for globality + seeds). Pass ``l3_memberships`` (and state/version)
+    from the pipeline to skip a duplicate membership query.
 
     Returns ``(seeds, effective_regime, l3_state, cluster_version, query_embedding)``.
 
-    - local: hybrid BM25+dense RRF TextChunk top ``B`` + Entity top ``max(1,B//2)``
-      (or Shadow Core + chunk anchors when ``shadow_enabled`` and Core builds)
-    - mixed: local + top 3 clusters (skipped when not ``l3_available`` / bootstrap)
-    - global: top 3 clusters only; if all probs ``< membership_min_probability``,
-      fall back to local and set regime ``global_fallback_local``
+    - local: Shadow Core + anchors (when enabled) or hybrid ANN; no clusters
+    - mixed/global (Shadow on): Core + anchors + clusters with ``c_share`` from G
+    - global (Shadow off): cluster-only (legacy ablation); weak L3 → fallback
     """
     if query_embedding is None:
         vectors = embedder.embed([question])
@@ -502,23 +519,37 @@ def select_seeds(
         query_arr = np.asarray(query_embedding, dtype=np.float32).ravel()
         query_vec = query_arr.tolist()
 
-    l3_state = "BOOTSTRAP"
-    cluster_version = 0
-    memberships: list[tuple[str, float]] = []
-    if l3_available:
-        try:
-            l3_state, cluster_version, memberships = query_cluster_membership(
-                query_arr, settings, store
-            )
-        except ClusteringError as exc:
-            logger.warning("l3_membership_unavailable err=%s", exc)
-            l3_state, cluster_version, memberships = "BOOTSTRAP", 0, []
+    if l3_memberships is not None:
+        memberships = list(l3_memberships)
+        resolved_l3_state = l3_state if l3_state is not None else "BOOTSTRAP"
+        resolved_cluster_version = (
+            int(cluster_version) if cluster_version is not None else 0
+        )
+    else:
+        resolved_l3_state = "BOOTSTRAP"
+        resolved_cluster_version = 0
+        memberships: list[tuple[str, float]] = []
+        if l3_available:
+            try:
+                (
+                    resolved_l3_state,
+                    resolved_cluster_version,
+                    memberships,
+                ) = query_cluster_membership(query_arr, settings, store)
+            except ClusteringError as exc:
+                logger.warning("l3_membership_unavailable err=%s", exc)
+                resolved_l3_state, resolved_cluster_version, memberships = (
+                    "BOOTSTRAP",
+                    0,
+                    [],
+                )
 
-    use_clusters = l3_available and l3_state == "FITTED" and bool(memberships)
+    use_clusters = resolved_l3_state == "FITTED" and bool(memberships)
     effective_regime = regime
     seeds: list[Seed] = []
     hybrid_path = False
     cluster_seeds_for_shadow: list[Seed] = []
+    min_prob = float(settings.membership_min_probability)
 
     if regime == "local":
         hybrid_path = True
@@ -527,36 +558,36 @@ def select_seeds(
         if use_clusters:
             cluster_seeds_for_shadow = _top_cluster_seeds(memberships, 3)
     elif regime == "global":
-        if use_clusters:
-            cluster_seeds = _top_cluster_seeds(
-                memberships,
-                3,
-                min_probability=None,
-            )
-            # Fall back if *all* top candidates are below threshold
-            if not any(
-                p >= settings.membership_min_probability for _, p in memberships[:3]
-            ):
-                effective_regime = "global_fallback_local"
-                hybrid_path = True
-            else:
-                seeds = [
-                    s
-                    for s in cluster_seeds
-                    if s.similarity >= settings.membership_min_probability
-                ]
-                if not seeds:
-                    effective_regime = "global_fallback_local"
+        if use_clusters and any(p >= min_prob for _, p in memberships[:3]):
+            cluster_seeds_for_shadow = [
+                s
+                for s in _top_cluster_seeds(memberships, 3)
+                if s.similarity >= min_prob
+            ]
+            if cluster_seeds_for_shadow:
+                if settings.shadow_enabled:
+                    # Always hybrid under Shadow — G only scales cluster mass.
                     hybrid_path = True
                 else:
+                    # Legacy ablation: pure-global cluster-only.
                     hybrid_path = False
+                    seeds = list(cluster_seeds_for_shadow)
+            else:
+                effective_regime = "global_fallback_local"
+                hybrid_path = True
         else:
             effective_regime = "global_fallback_local"
             hybrid_path = True
     else:
         raise RetrievalError(f"unknown regime: {regime}")
 
-    # Shadow path: hybrid ANN regimes only; fork before gate/softmax.
+    c_share = cluster_restart_share(
+        globality,
+        settings,
+        has_clusters=bool(cluster_seeds_for_shadow),
+    )
+
+    # Shadow path: hybrid ANN regimes; fork before gate/softmax.
     if settings.shadow_enabled and hybrid_path:
         shadow = _try_shadow_seeds(
             store=store,
@@ -566,16 +597,23 @@ def select_seeds(
             settings=settings,
             memberships=memberships if use_clusters else [],
             cluster_seeds=cluster_seeds_for_shadow,
+            cluster_share=c_share,
         )
         if shadow is not None:
-            return shadow, effective_regime, l3_state, cluster_version, query_arr
+            return (
+                shadow,
+                effective_regime,
+                resolved_l3_state,
+                resolved_cluster_version,
+                query_arr,
+            )
 
     # Legacy hybrid / cluster-only path
     if hybrid_path:
         seeds = _ann_seeds(store, query_vec, beam, settings, question)
-        if regime == "mixed" and use_clusters:
+        if use_clusters and regime in ("mixed", "global"):
             seeds.extend(_top_cluster_seeds(memberships, 3))
-    # else: seeds already set to cluster list for pure global
+    # else: seeds already set to cluster list for Shadow-off pure global
 
     seeds = _finalize_legacy_seeds(
         seeds,
@@ -584,4 +622,10 @@ def select_seeds(
         settings=settings,
         hybrid_path=hybrid_path,
     )
-    return seeds, effective_regime, l3_state, cluster_version, query_arr
+    return (
+        seeds,
+        effective_regime,
+        resolved_l3_state,
+        resolved_cluster_version,
+        query_arr,
+    )

@@ -68,7 +68,10 @@ poetry run python evals/tune_shadow.py                            # shadow Core 
 poetry run python evals/tune_hyperedge.py                         # COOCCURRENCE hyperedge channel sweep
 poetry run python scripts/embed_cooccurrence_hyperedges.py         # backfill Hyperedge.embedding (re-run after ER flush)
 poetry run python evals/run_metrics.py --shadow-enabled true --shadow-alpha 0.5
+poetry run python evals/run_metrics.py --output evals/reports/after_shadow_always.json
 ```
+
+Live baseline report: `evals/reports/after_shadow_always.json` (Shadow always-on restart). Prior: `after_shadow.json`.
 
 Writes `evals/reports/latest_metrics.json` by default and prints:
 

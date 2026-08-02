@@ -65,6 +65,7 @@ class RetrievalService:
         l3_state = "BOOTSTRAP"
         cluster_version = 0
         globality = 0.5
+        memberships: list[tuple[str, float]] = []
 
         if l3_available:
             try:
@@ -81,6 +82,7 @@ class RetrievalService:
                 l3_available = False
                 l3_state = "BOOTSTRAP"
                 cluster_version = 0
+                memberships = []
                 globality = 0.5
 
         regime, depth, beam = routing_parameters(globality, settings)
@@ -94,6 +96,10 @@ class RetrievalService:
             beam=beam,
             l3_available=l3_available,
             query_embedding=query_arr,
+            globality=float(globality),
+            l3_memberships=memberships,
+            l3_state=l3_state,
+            cluster_version=int(cluster_version),
         )
         # Prefer seed-path L3 reporting when it ran
         if seed_l3_state == "FITTED":

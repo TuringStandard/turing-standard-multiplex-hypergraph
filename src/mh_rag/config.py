@@ -89,7 +89,9 @@ class Settings(BaseSettings):
     core_entity_top_k: int = 10
     shadow_chunk_anchors: int = 2
     shadow_core_restart_share: float = 0.5
-    shadow_cluster_restart_share: float = 0.15  # mixed three-pool only
+    # Cluster pool cap; actual share = min(cap, slope * G) when mixed/global.
+    shadow_cluster_restart_share: float = 0.25
+    shadow_cluster_share_slope: float = 0.30
     # COOCCURRENCE hyperedge channel (PR-09 §2.2). Mechanism shipped; control won
     # gold vs after_shadow — keep disabled. Re-enable only after a better recipe.
     hyperedge_channel_enabled: bool = False

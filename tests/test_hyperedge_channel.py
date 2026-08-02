@@ -253,7 +253,8 @@ def test_empty_core_legacy_tail_still_attaches_hedge():
     assert "ann_e" in ids or "c1" in ids
 
 
-def test_pure_global_does_not_call_channel(monkeypatch):
+def test_global_shadow_calls_channel(monkeypatch):
+    """Shadow-on global uses hybrid_path; channel helper runs when enabled."""
     called = {"n": 0}
 
     def _spy(*_a, **_k):
@@ -274,6 +275,49 @@ def test_pure_global_does_not_call_channel(monkeypatch):
     )
     settings = Settings(
         hyperedge_channel_enabled=True,
+        shadow_enabled=True,
+        membership_min_probability=0.15,
+        seed_min_similarity=0.0,
+        shadow_alpha=1.0,
+    )
+    # Empty Core → legacy hybrid still has hybrid_path=True → channel called
+    seeds, regime, _, _, _ = select_seeds(
+        store=_FakeStore(),
+        embedder=_FakeEmbedder(),
+        settings=settings,
+        question="q",
+        regime="global",
+        beam=4,
+        l3_available=True,
+        globality=0.88,
+    )
+    assert regime == "global"
+    assert called["n"] >= 1
+    assert not all(s.label == "Cluster" for s in seeds)
+
+
+def test_shadow_off_global_does_not_call_channel(monkeypatch):
+    called = {"n": 0}
+
+    def _spy(*_a, **_k):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(
+        "mh_rag.retrieve.seeds.cooccurrence_entity_seeds",
+        _spy,
+    )
+
+    def _mem(*_a, **_k):
+        return "FITTED", 1, [("k1", 0.9), ("k2", 0.8)]
+
+    monkeypatch.setattr(
+        "mh_rag.retrieve.seeds.query_cluster_membership",
+        _mem,
+    )
+    settings = Settings(
+        hyperedge_channel_enabled=True,
+        shadow_enabled=False,
         membership_min_probability=0.15,
     )
     seeds, regime, _, _, _ = select_seeds(

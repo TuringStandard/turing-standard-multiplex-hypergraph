@@ -185,6 +185,7 @@ def run(
     shadow_alpha: float | None = None,
     shadow_core_restart_share: float | None = None,
     shadow_cluster_restart_share: float | None = None,
+    shadow_cluster_share_slope: float | None = None,
     hyperedge_channel_enabled: bool | None = None,
     hyperedge_ann_k: int | None = None,
     hyperedge_min_similarity: float | None = None,
@@ -215,6 +216,8 @@ def run(
         overrides["shadow_core_restart_share"] = shadow_core_restart_share
     if shadow_cluster_restart_share is not None:
         overrides["shadow_cluster_restart_share"] = shadow_cluster_restart_share
+    if shadow_cluster_share_slope is not None:
+        overrides["shadow_cluster_share_slope"] = shadow_cluster_share_slope
     if hyperedge_channel_enabled is not None:
         overrides["hyperedge_channel_enabled"] = hyperedge_channel_enabled
     if hyperedge_ann_k is not None:
@@ -318,6 +321,7 @@ def run(
             "shadow_chunk_anchors": settings.shadow_chunk_anchors,
             "shadow_core_restart_share": settings.shadow_core_restart_share,
             "shadow_cluster_restart_share": settings.shadow_cluster_restart_share,
+            "shadow_cluster_share_slope": settings.shadow_cluster_share_slope,
             "hyperedge_channel_enabled": settings.hyperedge_channel_enabled,
             "hyperedge_ann_k": settings.hyperedge_ann_k,
             "hyperedge_min_similarity": settings.hyperedge_min_similarity,
@@ -445,7 +449,13 @@ def main() -> None:
         "--shadow-cluster-share",
         type=float,
         default=None,
-        help="override shadow_cluster_restart_share",
+        help="override shadow_cluster_restart_share (cap)",
+    )
+    parser.add_argument(
+        "--shadow-cluster-slope",
+        type=float,
+        default=None,
+        help="override shadow_cluster_share_slope",
     )
     parser.add_argument(
         "--hyperedge-enabled",
@@ -493,6 +503,7 @@ def main() -> None:
         shadow_alpha=args.shadow_alpha,
         shadow_core_restart_share=args.shadow_core_share,
         shadow_cluster_restart_share=args.shadow_cluster_share,
+        shadow_cluster_share_slope=args.shadow_cluster_slope,
         hyperedge_channel_enabled=hedge_flag,
         hyperedge_ann_k=args.hyperedge_ann_k,
         hyperedge_min_similarity=args.hyperedge_min_sim,

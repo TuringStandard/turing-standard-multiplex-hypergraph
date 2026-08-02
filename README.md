@@ -164,10 +164,10 @@ Locked retrieval state on this corpus (see `evals/reports/`):
 |------|-------|------|
 | Pack floor / elbow | `0.48` / `0.6` | Tuned earlier |
 | Seed gate / softmax | `0.54` / `0.05` | Tuned earlier |
-| Shadow | **on** (`α=0.5`, core share `0.5`) | Won vs hybrid |
+| Shadow | **on** (`α=0.5`, core share `0.5`; cluster cap `0.25`, slope `0.30`) | Always-on Core when enabled; \(G\) → depth/beam/`c_share` |
 | Hyperedge channel | **off** | Mechanism shipped; control beat channel on gold |
 
-Reports: `after_shadow.json` (live baseline), `after_hyperedge.json` (control confirm = shadow parity).
+Reports: `after_shadow_always.json` (live baseline), `after_shadow.json` (pre–always-on), `after_hyperedge.json` (control confirm).
 
 ---
 
@@ -261,12 +261,13 @@ All settings load from environment / `.env` (see [`.env.example`](.env.example))
 | `SEED_SOFTMAX_TEMPERATURE` | `0.05` | Softmax τ for RWR restart mass; `≤0` = linear normalize. Tuned on gold |
 | `HYBRID_RRF_K` | `60` | RRF constant for dense+BM25 seed fusion (Cormack et al.) |
 | `HYBRID_BM25_CANDIDATES` | `20` | BM25/fulltext candidate pool size before RRF truncate to beam |
-| `SHADOW_ENABLED` | `true` | Soft L1∩L3 entity Core seeding (PR-09 §2.1); locked on gold vs hybrid |
+| `SHADOW_ENABLED` | `true` | Soft L1∩L3 entity Core seeding (PR-09 §2.1); always-on for all regimes when enabled (incl. global) |
 | `SHADOW_ALPHA` | `0.5` | Soft Core mix weight on L1 shadow; β = 1 − α for L3 shadow |
 | `CORE_ENTITY_TOP_K` | `10` | Max Core Entity seeds in RWR restart |
 | `SHADOW_CHUNK_ANCHORS` | `2` | Gated TextChunk footholds alongside Core |
 | `SHADOW_CORE_RESTART_SHARE` | `0.5` | Restart mass share for Core (remainder → chunk anchors); tuned on gold |
-| `SHADOW_CLUSTER_RESTART_SHARE` | `0.15` | Mixed regime: mass reserved for cluster seeds |
+| `SHADOW_CLUSTER_RESTART_SHARE` | `0.25` | Cap on cluster restart mass (mixed/global) |
+| `SHADOW_CLUSTER_SHARE_SLOPE` | `0.30` | Cluster mass = `min(cap, slope × G)` |
 | `HYPEREDGE_CHANNEL_ENABLED` | `false` | COOCCURRENCE ANN → Entity MEMBER seeds (PR-09 §2.2); shipped but off — control won gold vs after_shadow |
 | `HYPEREDGE_ANN_K` | `8` | Top-H COOCCURRENCE hyperedges by embedding cosine |
 | `HYPEREDGE_MIN_SIMILARITY` | `0.0` | Floor on hyperedge cosine; `≤0` keeps all ANN hits |

@@ -227,20 +227,18 @@ def test_shadow_skips_entity_ann_on_success():
     assert "TextChunk" in store.vector_search_labels
 
 
-def test_pure_global_does_not_invoke_shadow(monkeypatch):
-    """Cluster-only global must not call build_core_seeds."""
+def test_global_shadow_invokes_core(monkeypatch):
+    """Shadow-on global builds Core (+ clusters); not Cluster-only."""
     called = {"n": 0}
 
-    def _boom(*_a, **_k):
+    from mh_rag.retrieve.shadow import build_core_seeds as _real
+
+    def _wrap(*a, **k):
         called["n"] += 1
-        raise AssertionError("build_core_seeds must not run on pure global")
+        return _real(*a, **k)
 
-    monkeypatch.setattr(
-        "mh_rag.retrieve.seeds.build_core_seeds",
-        _boom,
-    )
+    monkeypatch.setattr("mh_rag.retrieve.seeds.build_core_seeds", _wrap)
 
-    # Force FITTED memberships via patching query_cluster_membership
     def _mem(*_a, **_k):
         return "FITTED", 1, [("k1", 0.9), ("k2", 0.8)]
 
@@ -248,7 +246,137 @@ def test_pure_global_does_not_invoke_shadow(monkeypatch):
         "mh_rag.retrieve.seeds.query_cluster_membership",
         _mem,
     )
-    settings = Settings(shadow_enabled=True, membership_min_probability=0.15)
+    settings = Settings(
+        shadow_enabled=True,
+        membership_min_probability=0.15,
+        seed_min_similarity=0.0,
+        shadow_alpha=1.0,
+        shadow_core_restart_share=0.5,
+        shadow_cluster_restart_share=0.25,
+        shadow_cluster_share_slope=0.30,
+    )
+    store = _ShadowStore(
+        hits={"TextChunk": [("c1", 0.9)], "Entity": []},
+        sourced_from=[("core_e", "c1", 1.0)],
+        member_of=[("core_e", "k1", 0.9)],
+    )
+    seeds, regime, _, _, _ = select_seeds(
+        store=store,
+        embedder=_FakeEmbedder(),
+        settings=settings,
+        question="q",
+        regime="global",
+        beam=4,
+        l3_available=True,
+        globality=0.88,
+    )
+    assert regime == "global"
+    assert called["n"] == 1
+    labels = {s.label for s in seeds}
+    assert "Entity" in labels or "TextChunk" in labels
+    assert "Cluster" in labels
+    assert not all(s.label == "Cluster" for s in seeds)
+    cl_mass = sum(s.similarity for s in seeds if s.label == "Cluster")
+    # min(0.25, 0.30 * 0.88) = 0.25
+    assert abs(cl_mass - 0.25) < 1e-9
+
+
+def test_cluster_share_formula():
+    from mh_rag.retrieve.seeds import cluster_restart_share
+
+    settings = Settings(
+        shadow_cluster_restart_share=0.25,
+        shadow_cluster_share_slope=0.30,
+    )
+    assert cluster_restart_share(0.5, settings, has_clusters=True) == 0.15
+    assert abs(cluster_restart_share(0.88, settings, has_clusters=True) - 0.25) < 1e-9
+    assert abs(cluster_restart_share(0.35, settings, has_clusters=True) - 0.105) < 1e-9
+    assert cluster_restart_share(0.9, settings, has_clusters=False) == 0.0
+
+
+def test_injected_memberships_skip_query(monkeypatch):
+    def _boom(*_a, **_k):
+        raise AssertionError("query_cluster_membership must not run when injected")
+
+    monkeypatch.setattr(
+        "mh_rag.retrieve.seeds.query_cluster_membership",
+        _boom,
+    )
+    settings = Settings(
+        shadow_enabled=True,
+        seed_min_similarity=0.0,
+        shadow_alpha=1.0,
+    )
+    store = _ShadowStore(
+        hits={"TextChunk": [("c1", 0.9)], "Entity": []},
+        sourced_from=[("core_e", "c1", 1.0)],
+    )
+    seeds, _, l3_state, version, _ = select_seeds(
+        store=store,
+        embedder=_FakeEmbedder(),
+        settings=settings,
+        question="q",
+        regime="local",
+        beam=4,
+        l3_available=True,
+        l3_memberships=[("k1", 0.9)],
+        l3_state="FITTED",
+        cluster_version=7,
+    )
+    assert l3_state == "FITTED"
+    assert version == 7
+    assert any(s.node_id == "core_e" for s in seeds)
+    # local: no Cluster seeds
+    assert not any(s.label == "Cluster" for s in seeds)
+
+
+def test_empty_core_global_legacy_includes_clusters(monkeypatch):
+    def _mem(*_a, **_k):
+        return "FITTED", 1, [("k1", 0.9), ("k2", 0.8)]
+
+    monkeypatch.setattr(
+        "mh_rag.retrieve.seeds.query_cluster_membership",
+        _mem,
+    )
+    settings = Settings(
+        shadow_enabled=True,
+        membership_min_probability=0.15,
+        seed_min_similarity=0.0,
+        seed_softmax_temperature=0.0,
+    )
+    # No SOURCED_FROM → Core empty → legacy hybrid + clusters
+    store = _ShadowStore(
+        hits={
+            "TextChunk": [("c1", 0.9)],
+            "Entity": [("ann_e", 0.8)],
+        },
+        sourced_from=[],
+    )
+    seeds, regime, _, _, _ = select_seeds(
+        store=store,
+        embedder=_FakeEmbedder(),
+        settings=settings,
+        question="q",
+        regime="global",
+        beam=4,
+        l3_available=True,
+        globality=0.8,
+    )
+    assert regime == "global"
+    ids = {s.node_id for s in seeds}
+    assert "k1" in ids
+    assert "c1" in ids or "ann_e" in ids
+
+
+def test_shadow_off_global_remains_cluster_only(monkeypatch):
+    def _mem(*_a, **_k):
+        return "FITTED", 1, [("k1", 0.9), ("k2", 0.8)]
+
+    monkeypatch.setattr(
+        "mh_rag.retrieve.seeds.query_cluster_membership",
+        _mem,
+    )
+    settings = Settings(shadow_enabled=False, membership_min_probability=0.15)
     seeds, regime, _, _, _ = select_seeds(
         store=_FakeStore(),
         embedder=_FakeEmbedder(),
@@ -257,10 +385,41 @@ def test_pure_global_does_not_invoke_shadow(monkeypatch):
         regime="global",
         beam=4,
         l3_available=True,
+        globality=0.9,
     )
     assert regime == "global"
-    assert called["n"] == 0
     assert all(s.label == "Cluster" for s in seeds)
+
+
+def test_local_shadow_has_no_cluster_seeds(monkeypatch):
+    def _mem(*_a, **_k):
+        return "FITTED", 1, [("k1", 0.9), ("k2", 0.8)]
+
+    monkeypatch.setattr(
+        "mh_rag.retrieve.seeds.query_cluster_membership",
+        _mem,
+    )
+    settings = Settings(
+        shadow_enabled=True,
+        seed_min_similarity=0.0,
+        shadow_alpha=1.0,
+    )
+    store = _ShadowStore(
+        hits={"TextChunk": [("c1", 0.9)], "Entity": []},
+        sourced_from=[("core_e", "c1", 1.0)],
+        member_of=[("core_e", "k1", 0.9)],
+    )
+    seeds, _, _, _, _ = select_seeds(
+        store=store,
+        embedder=_FakeEmbedder(),
+        settings=settings,
+        question="q",
+        regime="local",
+        beam=4,
+        l3_available=True,
+        globality=0.2,
+    )
+    assert not any(s.label == "Cluster" for s in seeds)
 
 
 def test_shadow_default_off_parity_with_legacy():
@@ -303,7 +462,8 @@ def test_mixed_shadow_includes_cluster_mass(monkeypatch):
         seed_min_similarity=0.0,
         shadow_alpha=1.0,
         shadow_core_restart_share=0.7,
-        shadow_cluster_restart_share=0.15,
+        shadow_cluster_restart_share=0.25,
+        shadow_cluster_share_slope=0.30,
         membership_top_m=2,
     )
     store = _ShadowStore(
@@ -319,10 +479,12 @@ def test_mixed_shadow_includes_cluster_mass(monkeypatch):
         regime="mixed",
         beam=4,
         l3_available=True,
+        globality=0.5,
     )
     assert regime == "mixed"
     labels = {s.label for s in seeds}
     assert "Entity" in labels and "TextChunk" in labels and "Cluster" in labels
     cl_mass = sum(s.similarity for s in seeds if s.label == "Cluster")
+    # min(0.25, 0.30 * 0.5) = 0.15
     assert abs(cl_mass - 0.15) < 1e-9
     assert abs(sum(s.similarity for s in seeds) - 1.0) < 1e-9
