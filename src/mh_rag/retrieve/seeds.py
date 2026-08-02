@@ -15,10 +15,31 @@ from mh_rag.exceptions import ClusteringError, RetrievalError
 from mh_rag.ingest.embedder import Embedder
 from mh_rag.layers.l3 import soft_column_labels
 from mh_rag.layers.l3_models import load_manifest
+from mh_rag.retrieve.context import cosine_similarity
 from mh_rag.retrieve.models import Seed
 from mh_rag.store.protocols import GraphStore
 
 logger = logging.getLogger(__name__)
+
+
+def reciprocal_rank_fusion(
+    rankings: list[list[str]],
+    rrf_k: int = 60,
+) -> list[tuple[str, float]]:
+    """Cormack et al. RRF: ``score(id) = Σ 1/(rrf_k + rank)`` (1-based ranks).
+
+    Empty input lists are ignored. Returns ``(id, score)`` sorted by score
+    descending, then id ascending.
+    """
+    k = max(0, int(rrf_k))
+    scores: dict[str, float] = {}
+    for ranking in rankings:
+        if not ranking:
+            continue
+        for rank, nid in enumerate(ranking, start=1):
+            key = str(nid)
+            scores[key] = scores.get(key, 0.0) + 1.0 / float(k + rank)
+    return sorted(scores.items(), key=lambda t: (-t[1], t[0]))
 
 
 def dedupe_seeds(seeds: list[Seed]) -> list[Seed]:
@@ -187,20 +208,133 @@ def query_cluster_membership(
     return "FITTED", int(manifest.cluster_version), scored
 
 
+def _fetch_embeddings(
+    store: GraphStore,
+    label: str,
+    ids: list[str],
+) -> dict[str, NDArray[np.float64]]:
+    """Batch-load ``embedding`` for ``ids`` of ``label`` (TextChunk or Entity)."""
+    if not ids:
+        return {}
+    if label not in ("TextChunk", "Entity"):
+        return {}
+    rows = store.query(
+        f"UNWIND $ids AS id MATCH (n:{label} {{id: id}}) "
+        "RETURN n.id, n.embedding",
+        {"ids": ids},
+    )
+    out: dict[str, NDArray[np.float64]] = {}
+    for row in rows:
+        nid, emb = row[0], row[1]
+        if emb is None:
+            continue
+        arr = np.asarray(emb, dtype=np.float64).ravel()
+        if arr.size == 0:
+            continue
+        out[str(nid)] = arr
+    return out
+
+
+def _cosine_map_for_ids(
+    store: GraphStore,
+    label: str,
+    ids: list[str],
+    dense_cos: dict[str, float],
+    query_arr: NDArray[np.float64],
+) -> dict[str, float]:
+    """Cosine for each id: prefer dense ANN map, else fetch embedding."""
+    missing = [i for i in ids if i not in dense_cos]
+    fetched = _fetch_embeddings(store, label, missing)
+    out: dict[str, float] = {}
+    for nid in ids:
+        if nid in dense_cos:
+            out[nid] = float(dense_cos[nid])
+            continue
+        emb = fetched.get(nid)
+        if emb is None:
+            continue
+        out[nid] = cosine_similarity(query_arr, emb)
+    return out
+
+
+def _hybrid_seeds(
+    store: GraphStore,
+    question: str,
+    query_vec: list[float],
+    beam: int,
+    settings: Settings,
+) -> list[Seed]:
+    """Dense ANN + BM25 fulltext fused with RRF; Seed.similarity = cosine."""
+    query_arr = np.asarray(query_vec, dtype=np.float64).ravel()
+    bm25_k = max(1, int(settings.hybrid_bm25_candidates))
+    rrf_k = int(settings.hybrid_rrf_k)
+    chunk_k = max(beam, bm25_k)
+    entity_n = max(1, beam // 2)
+    entity_k = max(entity_n, max(1, bm25_k // 2))
+
+    dense_chunks = store.vector_search("TextChunk", "embedding", query_vec, chunk_k)
+    dense_entities = store.vector_search("Entity", "embedding", query_vec, entity_k)
+    bm25_chunks = store.fulltext_search("TextChunk", question, chunk_k)
+    bm25_entities = store.fulltext_search("Entity", question, entity_k)
+
+    dense_chunk_cos = {str(nid): float(sim) for nid, sim in dense_chunks}
+    dense_entity_cos = {str(nid): float(sim) for nid, sim in dense_entities}
+
+    # Dense-only fallback when BM25 returns nothing for both labels
+    if not bm25_chunks and not bm25_entities:
+        seeds: list[Seed] = []
+        for nid, sim in dense_chunks[:beam]:
+            seeds.append(Seed(str(nid), "TextChunk", float(sim), "L1"))
+        for nid, sim in dense_entities[:entity_n]:
+            seeds.append(Seed(str(nid), "Entity", float(sim), "L2"))
+        return seeds
+
+    chunk_rrf = reciprocal_rank_fusion(
+        [
+            [str(nid) for nid, _ in dense_chunks],
+            [str(nid) for nid, _ in bm25_chunks],
+        ],
+        rrf_k,
+    )
+    entity_rrf = reciprocal_rank_fusion(
+        [
+            [str(nid) for nid, _ in dense_entities],
+            [str(nid) for nid, _ in bm25_entities],
+        ],
+        rrf_k,
+    )
+
+    chunk_ids = [nid for nid, _ in chunk_rrf[:beam]]
+    entity_ids = [nid for nid, _ in entity_rrf[:entity_n]]
+
+    chunk_cos = _cosine_map_for_ids(
+        store, "TextChunk", chunk_ids, dense_chunk_cos, query_arr
+    )
+    entity_cos = _cosine_map_for_ids(
+        store, "Entity", entity_ids, dense_entity_cos, query_arr
+    )
+
+    seeds = []
+    for nid in chunk_ids:
+        if nid not in chunk_cos:
+            continue
+        seeds.append(Seed(nid, "TextChunk", chunk_cos[nid], "L1"))
+    for nid in entity_ids:
+        if nid not in entity_cos:
+            continue
+        seeds.append(Seed(nid, "Entity", entity_cos[nid], "L2"))
+    return seeds
+
+
 def _ann_seeds(
     store: GraphStore,
     query_vec: list[float],
     beam: int,
+    settings: Settings,
+    question: str,
 ) -> list[Seed]:
-    chunk_hits = store.vector_search("TextChunk", "embedding", query_vec, beam)
-    entity_k = max(1, beam // 2)
-    entity_hits = store.vector_search("Entity", "embedding", query_vec, entity_k)
-    seeds: list[Seed] = []
-    for nid, sim in chunk_hits:
-        seeds.append(Seed(str(nid), "TextChunk", float(sim), "L1"))
-    for nid, sim in entity_hits:
-        seeds.append(Seed(str(nid), "Entity", float(sim), "L2"))
-    return seeds
+    """Backward-compatible name: hybrid BM25 + dense RRF seeding."""
+    return _hybrid_seeds(store, question, query_vec, beam, settings)
 
 
 def _top_cluster_seeds(
@@ -235,7 +369,7 @@ def select_seeds(
 
     Returns ``(seeds, effective_regime, l3_state, cluster_version, query_embedding)``.
 
-    - local: TextChunk ANN top ``B`` + Entity ANN top ``max(1,B//2)``
+    - local: hybrid BM25+dense RRF TextChunk top ``B`` + Entity top ``max(1,B//2)``
     - mixed: local + top 3 clusters (skipped when not ``l3_available`` / bootstrap)
     - global: top 3 clusters only; if all probs ``< membership_min_probability``,
       fall back to local and set regime ``global_fallback_local``
@@ -267,9 +401,9 @@ def select_seeds(
     seeds: list[Seed] = []
 
     if regime == "local":
-        seeds = _ann_seeds(store, query_vec, beam)
+        seeds = _ann_seeds(store, query_vec, beam, settings, question)
     elif regime == "mixed":
-        seeds = _ann_seeds(store, query_vec, beam)
+        seeds = _ann_seeds(store, query_vec, beam, settings, question)
         if use_clusters:
             seeds.extend(_top_cluster_seeds(memberships, 3))
     elif regime == "global":
@@ -284,7 +418,7 @@ def select_seeds(
                 p >= settings.membership_min_probability for _, p in memberships[:3]
             ):
                 effective_regime = "global_fallback_local"
-                seeds = _ann_seeds(store, query_vec, beam)
+                seeds = _ann_seeds(store, query_vec, beam, settings, question)
             else:
                 seeds = [
                     s
@@ -293,10 +427,10 @@ def select_seeds(
                 ]
                 if not seeds:
                     effective_regime = "global_fallback_local"
-                    seeds = _ann_seeds(store, query_vec, beam)
+                    seeds = _ann_seeds(store, query_vec, beam, settings, question)
         else:
             effective_regime = "global_fallback_local"
-            seeds = _ann_seeds(store, query_vec, beam)
+            seeds = _ann_seeds(store, query_vec, beam, settings, question)
     else:
         raise RetrievalError(f"unknown regime: {regime}")
 

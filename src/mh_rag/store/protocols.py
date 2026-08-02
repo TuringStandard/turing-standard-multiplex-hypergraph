@@ -1,4 +1,7 @@
-"""Storage interface used by all pipelines. FROZEN after PR-02."""
+"""Storage interface used by all pipelines.
+
+Extended in PR-09 §1.5 with ``fulltext_search`` (hybrid BM25 seeding).
+"""
 
 from typing import Any, Protocol
 
@@ -16,6 +19,11 @@ class GraphStore(Protocol):
         self, label: str, attribute: str, vector: list[float], k: int
     ) -> list[tuple[str, float]]:
         """ANN search; returns (node_id, score) pairs ordered by similarity."""
+
+    def fulltext_search(
+        self, label: str, query: str, k: int
+    ) -> list[tuple[str, float]]:
+        """BM25/fulltext search; returns (node_id, score) pairs ordered by score."""
 
     def upsert_nodes(self, label: str, key: str, rows: list[dict[str, Any]]) -> int:
         """MERGE nodes of `label` keyed on property `key`; returns rows written."""

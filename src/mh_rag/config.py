@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     # temperature <=0 would fall back to linear normalize.
     seed_min_similarity: float = 0.54
     seed_softmax_temperature: float = 0.05
+    # Hybrid BM25 + dense RRF seeding (PR-09 §1.5)
+    hybrid_rrf_k: int = 60
+    hybrid_bm25_candidates: int = 20
     layer_cross_l2_l1: float = 0.9
     layer_cross_l1_l3: float = 0.7
     layer_cross_l2_l3: float = 0.6
