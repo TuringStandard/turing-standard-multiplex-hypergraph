@@ -45,7 +45,8 @@ def pack_sources(
     """Greedy MMR + token-knapsack pack of TextChunk candidates.
 
     Drop chunks with query cosine below ``evidence_cos_floor``. Sort by score
-    descending, then pack while ``score >= evidence_elbow_ratio * best``
+    descending (never ``score/tokens`` — token count is only a budget fit
+    check), then pack while ``score >= evidence_elbow_ratio * best``
     (ratio ``<= 0`` disables the relative cut). Skip chunks that exceed
     remaining budget or are near-duplicates (cosine with any packed embedding
     ``> mmr_reject_cosine``).

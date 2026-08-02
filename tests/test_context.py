@@ -270,3 +270,37 @@ def test_all_below_cos_floor_returns_empty():
     ]
     packed = pack_sources(cands, query, settings, docs)
     assert packed == []
+
+
+def test_pack_prefers_score_over_token_efficiency():
+    """Long high-score chunk ranks above short low-score junk (PR-09 §1.2).
+
+    Under the old ``score / token_count`` order, a 40-token weak chunk would
+    outrank a 400-token strong chunk. Score-order packing must not do that.
+    """
+    settings = _settings(
+        token_budget=5000,
+        mmr_reject_cosine=0.99,
+        evidence_cos_floor=0.0,
+        evidence_elbow_ratio=0.0,
+    )
+    query = np.array([1.0, 0.0], dtype=np.float64)
+    docs = {"doc-a": DocumentMeta(title="", path="", mime="")}
+    cands = [
+        CandidateChunk(
+            _node("short_junk", tokens=40, emb=[0.15, 0.99]),
+            vector_similarity=0.15,
+            rwr_mass=0.05,
+            linked_to_seed_entity=False,
+        ),
+        CandidateChunk(
+            _node("long_gold", tokens=400, emb=[1.0, 0.0]),
+            vector_similarity=1.0,
+            rwr_mass=0.9,
+            linked_to_seed_entity=True,
+        ),
+    ]
+    packed = pack_sources(cands, query, settings, docs)
+    assert len(packed) == 2
+    assert packed[0].chunk_id == "long_gold"
+    assert packed[0].score > packed[1].score
