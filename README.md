@@ -231,6 +231,12 @@ All settings load from environment / `.env` (see [`.env.example`](.env.example))
 | `SEED_SOFTMAX_TEMPERATURE` | `0.05` | Softmax τ for RWR restart mass; `≤0` = linear normalize. Tuned on gold |
 | `HYBRID_RRF_K` | `60` | RRF constant for dense+BM25 seed fusion (Cormack et al.) |
 | `HYBRID_BM25_CANDIDATES` | `20` | BM25/fulltext candidate pool size before RRF truncate to beam |
+| `SHADOW_ENABLED` | `true` | Soft L1∩L3 entity Core seeding (PR-09 §2.1); locked on gold vs hybrid |
+| `SHADOW_ALPHA` | `0.5` | Soft Core mix weight on L1 shadow; β = 1 − α for L3 shadow |
+| `CORE_ENTITY_TOP_K` | `10` | Max Core Entity seeds in RWR restart |
+| `SHADOW_CHUNK_ANCHORS` | `2` | Gated TextChunk footholds alongside Core |
+| `SHADOW_CORE_RESTART_SHARE` | `0.5` | Restart mass share for Core (remainder → chunk anchors); tuned on gold |
+| `SHADOW_CLUSTER_RESTART_SHARE` | `0.15` | Mixed regime: mass reserved for cluster seeds |
 | `LAYER_CROSS_L2_L1` | `0.9` | Entity↔Chunk arc weight |
 | `LAYER_CROSS_L1_L3` | `0.7` | Chunk↔Cluster |
 | `LAYER_CROSS_L2_L3` | `0.6` | Entity↔Cluster |

@@ -181,6 +181,10 @@ def run(
     evidence_elbow_ratio: float | None = None,
     seed_min_similarity: float | None = None,
     seed_softmax_temperature: float | None = None,
+    shadow_enabled: bool | None = None,
+    shadow_alpha: float | None = None,
+    shadow_core_restart_share: float | None = None,
+    shadow_cluster_restart_share: float | None = None,
     quiet: bool = False,
 ) -> dict[str, Any]:
     """Execute the suite and return the report dict."""
@@ -199,6 +203,14 @@ def run(
         overrides["seed_min_similarity"] = seed_min_similarity
     if seed_softmax_temperature is not None:
         overrides["seed_softmax_temperature"] = seed_softmax_temperature
+    if shadow_enabled is not None:
+        overrides["shadow_enabled"] = shadow_enabled
+    if shadow_alpha is not None:
+        overrides["shadow_alpha"] = shadow_alpha
+    if shadow_core_restart_share is not None:
+        overrides["shadow_core_restart_share"] = shadow_core_restart_share
+    if shadow_cluster_restart_share is not None:
+        overrides["shadow_cluster_restart_share"] = shadow_cluster_restart_share
     settings = Settings(**overrides)
     store = FalkorStore(settings)
     embedder = TeiEmbedder(settings)
@@ -216,7 +228,9 @@ def run(
         print(
             f"gold={gold_path}  queries={len(gold_rows)}  graph_chunks={n_chunks}  "
             f"floor={settings.evidence_cos_floor}  elbow={settings.evidence_elbow_ratio}  "
-            f"seed_min={settings.seed_min_similarity}  seed_tau={settings.seed_softmax_temperature}"
+            f"seed_min={settings.seed_min_similarity}  seed_tau={settings.seed_softmax_temperature}  "
+            f"shadow={settings.shadow_enabled}  alpha={settings.shadow_alpha}  "
+            f"core_share={settings.shadow_core_restart_share}"
         )
         print("-" * 72)
 
@@ -284,6 +298,12 @@ def run(
             "seed_softmax_temperature": settings.seed_softmax_temperature,
             "hybrid_rrf_k": settings.hybrid_rrf_k,
             "hybrid_bm25_candidates": settings.hybrid_bm25_candidates,
+            "shadow_enabled": settings.shadow_enabled,
+            "shadow_alpha": settings.shadow_alpha,
+            "core_entity_top_k": settings.core_entity_top_k,
+            "shadow_chunk_anchors": settings.shadow_chunk_anchors,
+            "shadow_core_restart_share": settings.shadow_core_restart_share,
+            "shadow_cluster_restart_share": settings.shadow_cluster_restart_share,
             "rwr_iterations": settings.rwr_iterations,
             "beam_min": settings.beam_min,
             "beam_max": settings.beam_max,
@@ -385,9 +405,36 @@ def main() -> None:
         default=None,
         help="override seed_softmax_temperature for this run",
     )
+    parser.add_argument(
+        "--shadow-enabled",
+        type=str,
+        default=None,
+        help="override shadow_enabled (true/false)",
+    )
+    parser.add_argument(
+        "--shadow-alpha",
+        type=float,
+        default=None,
+        help="override shadow_alpha (β = 1 − α)",
+    )
+    parser.add_argument(
+        "--shadow-core-share",
+        type=float,
+        default=None,
+        help="override shadow_core_restart_share",
+    )
+    parser.add_argument(
+        "--shadow-cluster-share",
+        type=float,
+        default=None,
+        help="override shadow_cluster_restart_share",
+    )
     args = parser.parse_args()
     types = {t.strip() for t in args.types.split(",")} if args.types else None
     output = None if args.no_output else args.output
+    shadow_flag: bool | None = None
+    if args.shadow_enabled is not None:
+        shadow_flag = args.shadow_enabled.strip().lower() in ("1", "true", "yes", "on")
     run(
         args.gold,
         output,
@@ -397,6 +444,10 @@ def main() -> None:
         evidence_elbow_ratio=args.elbow_ratio,
         seed_min_similarity=args.seed_min_sim,
         seed_softmax_temperature=args.seed_softmax_temp,
+        shadow_enabled=shadow_flag,
+        shadow_alpha=args.shadow_alpha,
+        shadow_core_restart_share=args.shadow_core_share,
+        shadow_cluster_restart_share=args.shadow_cluster_share,
     )
 
 

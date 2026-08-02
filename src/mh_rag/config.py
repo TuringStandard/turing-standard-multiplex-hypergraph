@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     # Hybrid BM25 + dense RRF seeding (PR-09 §1.5)
     hybrid_rrf_k: int = 60
     hybrid_bm25_candidates: int = 20
+    # Shadow intersection seeding (PR-09 §2.1). Calibrated on gold vs after_hybrid_rrf:
+    # soft Core + gated anchors; β = 1 − shadow_alpha. Pool mass merge skips softmax.
+    shadow_enabled: bool = True
+    shadow_alpha: float = 0.5
+    core_entity_top_k: int = 10
+    shadow_chunk_anchors: int = 2
+    shadow_core_restart_share: float = 0.5
+    shadow_cluster_restart_share: float = 0.15  # mixed three-pool only
     layer_cross_l2_l1: float = 0.9
     layer_cross_l1_l3: float = 0.7
     layer_cross_l2_l3: float = 0.6

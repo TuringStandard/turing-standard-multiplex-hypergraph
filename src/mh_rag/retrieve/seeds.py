@@ -17,6 +17,7 @@ from mh_rag.layers.l3 import soft_column_labels
 from mh_rag.layers.l3_models import load_manifest
 from mh_rag.retrieve.context import cosine_similarity
 from mh_rag.retrieve.models import Seed
+from mh_rag.retrieve.shadow import build_core_seeds, merge_restart_pools
 from mh_rag.store.protocols import GraphStore
 
 logger = logging.getLogger(__name__)
@@ -257,6 +258,47 @@ def _cosine_map_for_ids(
     return out
 
 
+def _hybrid_chunk_hits(
+    store: GraphStore,
+    question: str,
+    query_vec: list[float],
+    beam: int,
+    settings: Settings,
+) -> list[tuple[str, float]]:
+    """Dense + BM25 RRF TextChunk hits of size ``K = max(beam, bm25_k)`` with cosine.
+
+    Returns ``(chunk_id, cos)`` sorted by RRF rank (truncated to K). Dense-only
+    fallback when BM25 returns nothing for chunks.
+    """
+    query_arr = np.asarray(query_vec, dtype=np.float64).ravel()
+    bm25_k = max(1, int(settings.hybrid_bm25_candidates))
+    rrf_k = int(settings.hybrid_rrf_k)
+    chunk_k = max(int(beam), bm25_k)
+
+    dense_chunks = store.vector_search("TextChunk", "embedding", query_vec, chunk_k)
+    bm25_chunks = store.fulltext_search("TextChunk", question, chunk_k)
+    dense_chunk_cos = {str(nid): float(sim) for nid, sim in dense_chunks}
+
+    if not bm25_chunks:
+        out: list[tuple[str, float]] = []
+        for nid, sim in dense_chunks[:chunk_k]:
+            out.append((str(nid), float(sim)))
+        return out
+
+    chunk_rrf = reciprocal_rank_fusion(
+        [
+            [str(nid) for nid, _ in dense_chunks],
+            [str(nid) for nid, _ in bm25_chunks],
+        ],
+        rrf_k,
+    )
+    chunk_ids = [nid for nid, _ in chunk_rrf[:chunk_k]]
+    chunk_cos = _cosine_map_for_ids(
+        store, "TextChunk", chunk_ids, dense_chunk_cos, query_arr
+    )
+    return [(nid, chunk_cos[nid]) for nid in chunk_ids if nid in chunk_cos]
+
+
 def _hybrid_seeds(
     store: GraphStore,
     question: str,
@@ -351,6 +393,51 @@ def _top_cluster_seeds(
     return out
 
 
+def _try_shadow_seeds(
+    *,
+    store: GraphStore,
+    question: str,
+    query_vec: list[float],
+    beam: int,
+    settings: Settings,
+    memberships: list[tuple[str, float]],
+    cluster_seeds: list[Seed],
+) -> list[Seed] | None:
+    """Build Core + gated anchors (+ clusters) with pool mass; None → legacy.
+
+    Skips hybrid entity ANN. Never cosine-gates Core. Skips global softmax.
+    """
+    hits = _hybrid_chunk_hits(store, question, query_vec, beam, settings)
+    if not hits:
+        return None
+    cos_by_chunk = {nid: cos for nid, cos in hits}
+    core = build_core_seeds(store, cos_by_chunk, memberships, settings)
+    if not core:
+        return None
+
+    beam_chunks = [
+        Seed(nid, "TextChunk", cos, "L1") for nid, cos in hits[: max(1, int(beam))]
+    ]
+    gated = gate_seeds(beam_chunks, settings.seed_min_similarity)
+    n_anchors = max(0, int(settings.shadow_chunk_anchors))
+    anchors = sorted(
+        [s for s in gated if s.label == "TextChunk"],
+        key=lambda s: (-float(s.similarity), s.node_id),
+    )[:n_anchors]
+
+    use_clusters = bool(cluster_seeds)
+    cluster_share = (
+        float(settings.shadow_cluster_restart_share) if use_clusters else 0.0
+    )
+    return merge_restart_pools(
+        core,
+        anchors,
+        list(cluster_seeds) if use_clusters else [],
+        core_share=float(settings.shadow_core_restart_share),
+        cluster_share=cluster_share,
+    )
+
+
 def select_seeds(
     *,
     store: GraphStore,
@@ -370,6 +457,7 @@ def select_seeds(
     Returns ``(seeds, effective_regime, l3_state, cluster_version, query_embedding)``.
 
     - local: hybrid BM25+dense RRF TextChunk top ``B`` + Entity top ``max(1,B//2)``
+      (or Shadow Core + chunk anchors when ``shadow_enabled`` and Core builds)
     - mixed: local + top 3 clusters (skipped when not ``l3_available`` / bootstrap)
     - global: top 3 clusters only; if all probs ``< membership_min_probability``,
       fall back to local and set regime ``global_fallback_local``
@@ -399,13 +487,15 @@ def select_seeds(
     use_clusters = l3_available and l3_state == "FITTED" and bool(memberships)
     effective_regime = regime
     seeds: list[Seed] = []
+    hybrid_path = False
+    cluster_seeds_for_shadow: list[Seed] = []
 
     if regime == "local":
-        seeds = _ann_seeds(store, query_vec, beam, settings, question)
+        hybrid_path = True
     elif regime == "mixed":
-        seeds = _ann_seeds(store, query_vec, beam, settings, question)
+        hybrid_path = True
         if use_clusters:
-            seeds.extend(_top_cluster_seeds(memberships, 3))
+            cluster_seeds_for_shadow = _top_cluster_seeds(memberships, 3)
     elif regime == "global":
         if use_clusters:
             cluster_seeds = _top_cluster_seeds(
@@ -418,7 +508,7 @@ def select_seeds(
                 p >= settings.membership_min_probability for _, p in memberships[:3]
             ):
                 effective_regime = "global_fallback_local"
-                seeds = _ann_seeds(store, query_vec, beam, settings, question)
+                hybrid_path = True
             else:
                 seeds = [
                     s
@@ -427,12 +517,35 @@ def select_seeds(
                 ]
                 if not seeds:
                     effective_regime = "global_fallback_local"
-                    seeds = _ann_seeds(store, query_vec, beam, settings, question)
+                    hybrid_path = True
+                else:
+                    hybrid_path = False
         else:
             effective_regime = "global_fallback_local"
-            seeds = _ann_seeds(store, query_vec, beam, settings, question)
+            hybrid_path = True
     else:
         raise RetrievalError(f"unknown regime: {regime}")
+
+    # Shadow path: hybrid ANN regimes only; fork before gate/softmax.
+    if settings.shadow_enabled and hybrid_path:
+        shadow = _try_shadow_seeds(
+            store=store,
+            question=question,
+            query_vec=query_vec,
+            beam=beam,
+            settings=settings,
+            memberships=memberships if use_clusters else [],
+            cluster_seeds=cluster_seeds_for_shadow,
+        )
+        if shadow is not None:
+            return shadow, effective_regime, l3_state, cluster_version, query_arr
+
+    # Legacy hybrid / cluster-only path
+    if hybrid_path:
+        seeds = _ann_seeds(store, query_vec, beam, settings, question)
+        if regime == "mixed" and use_clusters:
+            seeds.extend(_top_cluster_seeds(memberships, 3))
+    # else: seeds already set to gated cluster list for pure global
 
     seeds = dedupe_seeds(seeds)
     seeds = gate_seeds(seeds, settings.seed_min_similarity)
