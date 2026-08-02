@@ -44,13 +44,17 @@ def pack_sources(
 ) -> list[PackedSource]:
     """Greedy MMR + token-knapsack pack of TextChunk candidates.
 
-    Sort by ``score / max(token_count, 1)`` descending, then chunk id ascending.
-    Skip chunks that exceed remaining budget or are near-duplicates
-    (cosine with any packed embedding ``> mmr_reject_cosine``).
+    Drop chunks with query cosine below ``evidence_cos_floor``. Sort by score
+    descending, then pack while ``score >= evidence_elbow_ratio * best``
+    (ratio ``<= 0`` disables the relative cut). Skip chunks that exceed
+    remaining budget or are near-duplicates (cosine with any packed embedding
+    ``> mmr_reject_cosine``).
     """
     query = _l2_normalize(np.asarray(query_embedding, dtype=np.float64))
+    cos_floor = float(settings.evidence_cos_floor)
+    elbow_ratio = float(settings.evidence_elbow_ratio)
 
-    scored: list[tuple[float, float, CandidateChunk]] = []
+    scored: list[tuple[float, CandidateChunk]] = []
     for cand in candidates:
         if cand.node.label != "TextChunk":
             continue
@@ -58,19 +62,26 @@ def pack_sources(
         if emb is None:
             continue
         cos = cosine_similarity(query, np.asarray(emb, dtype=np.float64))
+        if cos < cos_floor:
+            continue
         score = candidate_score(cos, cand.rwr_mass, cand.linked_to_seed_entity)
-        tokens = max(int(cand.node.token_count), 1)
-        efficiency = score / float(tokens)
-        scored.append((efficiency, score, cand))
+        scored.append((score, cand))
 
-    scored.sort(key=lambda t: (-t[0], t[2].node.id))
+    if not scored:
+        return []
+
+    scored.sort(key=lambda t: (-t[0], t[1].node.id))
+    best = scored[0][0]
 
     budget = int(settings.token_budget)
     packed: list[PackedSource] = []
     packed_embeddings: list[NDArray[np.float64]] = []
     used = 0
 
-    for _eff, score, cand in scored:
+    for score, cand in scored:
+        if elbow_ratio > 0.0 and score < elbow_ratio * best:
+            break
+
         node = cand.node
         tokens = int(node.token_count)
         if tokens <= 0:

@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     globality_local_cutoff: float = 0.35
     globality_global_cutoff: float = 0.65
     mmr_reject_cosine: float = 0.95
+    evidence_cos_floor: float = 0.48  # pack: drop chunks with query-cos below this
+    evidence_elbow_ratio: float = 0.6  # pack: stop when score < ratio * best; <=0 disables
     layer_cross_l2_l1: float = 0.9
     layer_cross_l1_l3: float = 0.7
     layer_cross_l2_l3: float = 0.6
