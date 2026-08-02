@@ -64,6 +64,8 @@ poetry run python evals/run_metrics.py --limit 5                  # smoke
 poetry run python evals/run_metrics.py --types exact,paraphrase   # subset
 poetry run python evals/run_metrics.py --seed-min-sim 0.54 --seed-softmax-temp 0.05
 poetry run python evals/tune_seeds.py                             # seed gate/softmax sweep
+poetry run python evals/tune_shadow.py                            # shadow Core α/share sweep
+poetry run python evals/run_metrics.py --shadow-enabled true --shadow-alpha 0.5
 ```
 
 Writes `evals/reports/latest_metrics.json` by default and prints:
