@@ -1,0 +1,126 @@
+{
+  "created_at": "2026-08-02T10:35:01.435564+00:00",
+  "gold_path": "D:\\turing-standard-multiplex-hypergraph\\evals\\gold_queries.jsonl",
+  "graph_chunk_count": 508,
+  "settings": {
+    "graph_name": "mhrag",
+    "token_budget": 3000,
+    "mmr_reject_cosine": 0.95,
+    "rwr_iterations": 20,
+    "beam_min": 4,
+    "beam_max": 16
+  },
+  "aggregates": {
+    "overall": {
+      "n": 3.0,
+      "precision_at_5": 0.20000000000000004,
+      "recall_at_10": 1.0,
+      "hit_at_5": 1.0,
+      "avg_packed_tokens": 2813.0,
+      "avg_retrieved": 7.666666666666667,
+      "evidence_found_rate": 1.0,
+      "avg_latency_ms": 5436.796833333271
+    },
+    "by_type": {
+      "exact": {
+        "n": 3.0,
+        "precision_at_5": 0.20000000000000004,
+        "recall_at_10": 1.0,
+        "hit_at_5": 1.0,
+        "avg_packed_tokens": 2813.0,
+        "avg_retrieved": 7.666666666666667,
+        "evidence_found_rate": 1.0,
+        "avg_latency_ms": 5436.796833333271
+      }
+    },
+    "paraphrase_delta": {
+      "n_pairs": 0.0,
+      "precision_at_5_exact_minus_para": 0.0,
+      "recall_at_10_exact_minus_para": 0.0
+    },
+    "noise_ratio_top10": 0.8690476190476191,
+    "type_counts": {
+      "exact": 3
+    }
+  },
+  "errors": [],
+  "per_query": [
+    {
+      "id": "sm-exact-01",
+      "type": "exact",
+      "precision_at_5": 0.2,
+      "recall_at_10": 1.0,
+      "hit_at_5": 1.0,
+      "retrieved_count": 8,
+      "relevant_count": 1,
+      "relevant_retrieved_5": 1,
+      "relevant_retrieved_10": 1,
+      "packed_tokens": 2729,
+      "evidence_found": true,
+      "regime": "mixed",
+      "latency_ms": 15175.448699999833,
+      "retrieved_chunk_ids": [
+        "a1f694b32aa75dcf5b457873065477248912658a73f9e4fc946759fee1054fa6",
+        "ecad6e8980bf51c69ac77d45d70883608dba7c6d6aec65f356c8d4b920b7f38e",
+        "0bdf1486e4f1c5a9203593148fb7aff0bac3825d65f43709436770bc7c889e85",
+        "a2b821b60769845a41afc7cd6b272465f3557f1412168fc3656c02b9e095888f",
+        "e2c9d2bdba81186a16ee19354eb7be0bb031bf0fe07b928f932b3f60a22b5af0",
+        "2e684e4b35bcc3f467b57f07ccde14b29c64a528083983b59bf0cea4426a2e6e",
+        "1d28efff1b6c98bf61643ad41a48d3516715e722e08d136519b2d2e4fb18d438",
+        "00811c8161041e98629b0fd3ae3abbf0e516a5a84c6957bc6b73076d138073d1"
+      ],
+      "pair_of": null
+    },
+    {
+      "id": "sm-exact-02",
+      "type": "exact",
+      "precision_at_5": 0.2,
+      "recall_at_10": 1.0,
+      "hit_at_5": 1.0,
+      "retrieved_count": 8,
+      "relevant_count": 1,
+      "relevant_retrieved_5": 1,
+      "relevant_retrieved_10": 1,
+      "packed_tokens": 2943,
+      "evidence_found": true,
+      "regime": "local",
+      "latency_ms": 435.16600000020844,
+      "retrieved_chunk_ids": [
+        "7a7469509d90aa99168bd716c35de4f6c95bba07b1225f4a38194afb6160ad64",
+        "3017741ce77264f960f0bafa4c4b99c897fceaded8694857aa48d489ec1a8e5e",
+        "4b34199b82b7976cde8f7c19c281b8f1494ebbe5634cbf86147829913e97e3d7",
+        "e106adc63077ba356214804056b35f6558b4cb5818a0ba4d257e75685ccb175e",
+        "33edb0f2c4eae97e25335cccb1eeaa0c891c0500abe990cac44af0f350f30adc",
+        "215266b0ad801ac8f4b3e917c0a16624924674c838a4106ad868a260bc441a83",
+        "0e9199d830721d38e3e36d232ee3889b03c3748be808d8bcb5fa9c912ec132ca",
+        "2e684e4b35bcc3f467b57f07ccde14b29c64a528083983b59bf0cea4426a2e6e"
+      ],
+      "pair_of": null
+    },
+    {
+      "id": "sm-exact-03",
+      "type": "exact",
+      "precision_at_5": 0.2,
+      "recall_at_10": 1.0,
+      "hit_at_5": 1.0,
+      "retrieved_count": 7,
+      "relevant_count": 1,
+      "relevant_retrieved_5": 1,
+      "relevant_retrieved_10": 1,
+      "packed_tokens": 2767,
+      "evidence_found": true,
+      "regime": "mixed",
+      "latency_ms": 699.7757999997702,
+      "retrieved_chunk_ids": [
+        "4034eb60ab128c1a619c454429818e06dc5ae2958bf7cc5d6d3401ecd62c65ad",
+        "ba7225eb3fc4a67da6e5bcd740316b0ca16e2b3a02ccd8fd8244d8361401518e",
+        "434d0ab6759dc4107281632227d5697f8646ad7e78e5cd23a3e6f999abc0ad91",
+        "1d28efff1b6c98bf61643ad41a48d3516715e722e08d136519b2d2e4fb18d438",
+        "2206a964fbdb991b8771ad98c5672cb1d4d4714b48164e475ccbed012ae3446a",
+        "08305dc10f47db8657de0a67e10096dd725b055ba2cfd6b97aa4b8505e504b4d",
+        "00811c8161041e98629b0fd3ae3abbf0e516a5a84c6957bc6b73076d138073d1"
+      ],
+      "pair_of": null
+    }
+  ]
+}
