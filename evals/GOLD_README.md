@@ -62,7 +62,8 @@ Needs Falkor + TEI up and the corpus ingested (no Azure):
 poetry run python evals/run_metrics.py
 poetry run python evals/run_metrics.py --limit 5                  # smoke
 poetry run python evals/run_metrics.py --types exact,paraphrase   # subset
-poetry run python evals/run_metrics.py --output reports/baseline.json
+poetry run python evals/run_metrics.py --seed-min-sim 0.54 --seed-softmax-temp 0.05
+poetry run python evals/tune_seeds.py                             # seed gate/softmax sweep
 ```
 
 Writes `evals/reports/latest_metrics.json` by default and prints:

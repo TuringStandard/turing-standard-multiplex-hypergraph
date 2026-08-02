@@ -179,6 +179,8 @@ def run(
     *,
     evidence_cos_floor: float | None = None,
     evidence_elbow_ratio: float | None = None,
+    seed_min_similarity: float | None = None,
+    seed_softmax_temperature: float | None = None,
     quiet: bool = False,
 ) -> dict[str, Any]:
     """Execute the suite and return the report dict."""
@@ -193,6 +195,10 @@ def run(
         overrides["evidence_cos_floor"] = evidence_cos_floor
     if evidence_elbow_ratio is not None:
         overrides["evidence_elbow_ratio"] = evidence_elbow_ratio
+    if seed_min_similarity is not None:
+        overrides["seed_min_similarity"] = seed_min_similarity
+    if seed_softmax_temperature is not None:
+        overrides["seed_softmax_temperature"] = seed_softmax_temperature
     settings = Settings(**overrides)
     store = FalkorStore(settings)
     embedder = TeiEmbedder(settings)
@@ -209,7 +215,8 @@ def run(
     if not quiet:
         print(
             f"gold={gold_path}  queries={len(gold_rows)}  graph_chunks={n_chunks}  "
-            f"floor={settings.evidence_cos_floor}  elbow={settings.evidence_elbow_ratio}"
+            f"floor={settings.evidence_cos_floor}  elbow={settings.evidence_elbow_ratio}  "
+            f"seed_min={settings.seed_min_similarity}  seed_tau={settings.seed_softmax_temperature}"
         )
         print("-" * 72)
 
@@ -273,6 +280,8 @@ def run(
             "mmr_reject_cosine": settings.mmr_reject_cosine,
             "evidence_cos_floor": settings.evidence_cos_floor,
             "evidence_elbow_ratio": settings.evidence_elbow_ratio,
+            "seed_min_similarity": settings.seed_min_similarity,
+            "seed_softmax_temperature": settings.seed_softmax_temperature,
             "rwr_iterations": settings.rwr_iterations,
             "beam_min": settings.beam_min,
             "beam_max": settings.beam_max,
@@ -362,6 +371,18 @@ def main() -> None:
         default=None,
         help="override evidence_elbow_ratio for this run",
     )
+    parser.add_argument(
+        "--seed-min-sim",
+        type=float,
+        default=None,
+        help="override seed_min_similarity for this run",
+    )
+    parser.add_argument(
+        "--seed-softmax-temp",
+        type=float,
+        default=None,
+        help="override seed_softmax_temperature for this run",
+    )
     args = parser.parse_args()
     types = {t.strip() for t in args.types.split(",")} if args.types else None
     output = None if args.no_output else args.output
@@ -372,6 +393,8 @@ def main() -> None:
         types,
         evidence_cos_floor=args.cos_floor,
         evidence_elbow_ratio=args.elbow_ratio,
+        seed_min_similarity=args.seed_min_sim,
+        seed_softmax_temperature=args.seed_softmax_temp,
     )
 
 

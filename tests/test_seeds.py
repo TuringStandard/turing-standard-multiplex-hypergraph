@@ -1,13 +1,17 @@
-"""Unit tests for seed dedupe / normalize and select_seeds with fakes."""
+"""Unit tests for seed dedupe / normalize / gate / softmax and select_seeds."""
 
 from __future__ import annotations
+
+import math
 
 from mh_rag.config import Settings
 from mh_rag.retrieve.models import Seed
 from mh_rag.retrieve.seeds import (
     dedupe_seeds,
+    gate_seeds,
     normalize_seed_similarities,
     select_seeds,
+    softmax_seed_similarities,
 )
 
 
@@ -70,6 +74,86 @@ def test_normalize_uniform_when_zero():
     assert abs(out[0].similarity - 0.5) < 1e-9
 
 
+def test_gate_drops_below_floor_keeps_above():
+    seeds = [
+        Seed("c1", "TextChunk", 0.55, "L1"),
+        Seed("c2", "TextChunk", 0.30, "L1"),
+        Seed("e1", "Entity", 0.50, "L2"),
+        Seed("e2", "Entity", 0.20, "L2"),
+    ]
+    out = gate_seeds(seeds, 0.45)
+    assert [s.node_id for s in out] == ["c1", "e1"]
+
+
+def test_gate_keeps_best_chunk_when_all_below():
+    seeds = [
+        Seed("c_low", "TextChunk", 0.20, "L1"),
+        Seed("c_mid", "TextChunk", 0.35, "L1"),
+        Seed("e_weak", "Entity", 0.10, "L2"),
+        Seed("e_ok", "Entity", 0.50, "L2"),
+    ]
+    out = gate_seeds(seeds, 0.45)
+    ids = {s.node_id for s in out}
+    assert ids == {"c_mid", "e_ok"}
+    assert next(s for s in out if s.label == "TextChunk").similarity == 0.35
+
+
+def test_gate_cluster_pass_through():
+    seeds = [
+        Seed("c1", "TextChunk", 0.20, "L1"),
+        Seed("k1", "Cluster", 0.12, "L3"),
+        Seed("e1", "Entity", 0.10, "L2"),
+    ]
+    out = gate_seeds(seeds, 0.45)
+    labels = {s.label for s in out}
+    assert "Cluster" in labels
+    assert next(s for s in out if s.label == "Cluster").similarity == 0.12
+    assert any(s.node_id == "c1" for s in out)  # keep-best chunk
+    assert not any(s.node_id == "e1" for s in out)
+
+
+def test_gate_noop_when_floor_zero():
+    seeds = [
+        Seed("c1", "TextChunk", 0.1, "L1"),
+        Seed("e1", "Entity", 0.05, "L2"),
+    ]
+    out = gate_seeds(seeds, 0.0)
+    assert len(out) == 2
+
+
+def test_softmax_concentrates_and_sums_to_one():
+    seeds = [
+        Seed("a", "TextChunk", 0.60, "L1"),
+        Seed("b", "Entity", 0.40, "L2"),
+    ]
+    out = softmax_seed_similarities(seeds, 0.08)
+    assert abs(sum(s.similarity for s in out) - 1.0) < 1e-9
+    by_id = {s.node_id: s.similarity for s in out}
+    assert by_id["a"] > by_id["b"]
+    # Stronger than linear 0.6/0.4 = 0.6
+    assert by_id["a"] > 0.6
+
+
+def test_softmax_tau_le_zero_is_linear():
+    seeds = [
+        Seed("a", "TextChunk", 1.0, "L1"),
+        Seed("b", "Entity", 3.0, "L2"),
+    ]
+    out = softmax_seed_similarities(seeds, 0.0)
+    assert abs(out[0].similarity - 0.25) < 1e-9
+    assert abs(out[1].similarity - 0.75) < 1e-9
+
+
+def test_softmax_stable_large_sims():
+    seeds = [
+        Seed("a", "TextChunk", 50.0, "L1"),
+        Seed("b", "Entity", 49.0, "L2"),
+    ]
+    out = softmax_seed_similarities(seeds, 1.0)
+    assert all(math.isfinite(s.similarity) for s in out)
+    assert abs(sum(s.similarity for s in out) - 1.0) < 1e-9
+
+
 def test_select_local_ann_only():
     settings = Settings()
     store = _FakeStore()
@@ -90,6 +174,28 @@ def test_select_local_ann_only():
     assert "TextChunk" in labels
     assert "Entity" in labels
     assert "Cluster" not in labels
+    assert abs(sum(s.similarity for s in seeds) - 1.0) < 1e-9
+
+
+def test_select_seeds_drops_weak_under_floor():
+    settings = Settings(seed_min_similarity=0.85, seed_softmax_temperature=0.0)
+    store = _FakeStore(
+        {
+            "TextChunk": [("c1", 0.90), ("c2", 0.50)],
+            "Entity": [("e1", 0.40)],
+        }
+    )
+    seeds, _, _, _, _ = select_seeds(
+        store=store,
+        embedder=_FakeEmbedder(),
+        settings=settings,
+        question="q",
+        regime="local",
+        beam=4,
+        l3_available=False,
+    )
+    ids = {s.node_id for s in seeds}
+    assert ids == {"c1"}
     assert abs(sum(s.similarity for s in seeds) - 1.0) < 1e-9
 
 

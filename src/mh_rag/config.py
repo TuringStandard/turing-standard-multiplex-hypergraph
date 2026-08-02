@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     mmr_reject_cosine: float = 0.95
     evidence_cos_floor: float = 0.48  # pack: drop chunks with query-cos below this
     evidence_elbow_ratio: float = 0.6  # pack: stop when score < ratio * best; <=0 disables
+    # Seed gate + softmax (PR-09 §1.4). Calibrated on gold vs after_score_sort:
+    # ANN-only floor; Cluster seeds use membership_min_probability instead.
+    # temperature <=0 would fall back to linear normalize.
+    seed_min_similarity: float = 0.54
+    seed_softmax_temperature: float = 0.05
     layer_cross_l2_l1: float = 0.9
     layer_cross_l1_l3: float = 0.7
     layer_cross_l2_l3: float = 0.6
