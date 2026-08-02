@@ -18,6 +18,7 @@ from mh_rag.ingest.normalization import clean_string
 from mh_rag.ingest.resolution import EntityResolver
 from mh_rag.ingest.sources import sha256_text
 from mh_rag.logging_setup import configure_logging
+from mh_rag.retrieve.hyperedge_channel import build_cooccurrence_embed_text
 from mh_rag.store import FalkorStore, GraphStore, apply_schema
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ def _process_chunk(
     reused = 0
     resolved_by_name: dict[str, str] = {}  # surface name -> entity id
     id_order: list[str] = []
+    id_to_name: dict[str, str] = {}
 
     for mention in unique_mentions:
         resolved = resolver.resolve(mention, chunk_id, text)
@@ -96,6 +98,7 @@ def _process_chunk(
         resolved_by_name[mention.name] = resolved.id
         if resolved.id not in id_order:
             id_order.append(resolved.id)
+        id_to_name[resolved.id] = resolved.canonical_name
 
         newly_linked = _link_sourced_from(store, resolved.id, chunk_id, ts)
         if newly_linked:
@@ -142,6 +145,29 @@ def _process_chunk(
             },
         )
         hyperedges = 1
+        embed_text = build_cooccurrence_embed_text(
+            [id_to_name[eid] for eid in id_order if eid in id_to_name]
+        )
+        if embed_text:
+            try:
+                vectors = embedder.embed([embed_text])
+                if vectors:
+                    store.upsert_nodes_with_vector(
+                        "Hyperedge",
+                        "id",
+                        [
+                            {
+                                "id": hid,
+                                "embed_text": embed_text,
+                                "embedding": vectors[0],
+                            }
+                        ],
+                        "embedding",
+                    )
+            except Exception as exc:  # noqa: BLE001 — structure kept; backfill repairs
+                logger.warning(
+                    "cooccurrence_embed_failed hid=%s err=%s", hid, exc
+                )
 
     store.upsert_nodes(
         "IngestStatus",

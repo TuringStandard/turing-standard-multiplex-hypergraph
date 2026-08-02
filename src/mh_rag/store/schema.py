@@ -37,6 +37,8 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     "OPTIONS {dimension: 1024, similarityFunction: 'cosine', M: 16, efConstruction: 200}",
     "CREATE VECTOR INDEX FOR (k:Cluster) ON (k.medoid_embedding) "
     "OPTIONS {dimension: 1024, similarityFunction: 'cosine', M: 16, efConstruction: 200}",
+    "CREATE VECTOR INDEX FOR (h:Hyperedge) ON (h.embedding) "
+    "OPTIONS {dimension: 1024, similarityFunction: 'cosine', M: 16, efConstruction: 200}",
 )
 
 FULLTEXT_STATEMENTS: tuple[str, ...] = (

@@ -16,6 +16,10 @@ from mh_rag.ingest.embedder import Embedder
 from mh_rag.layers.l3 import soft_column_labels
 from mh_rag.layers.l3_models import load_manifest
 from mh_rag.retrieve.context import cosine_similarity
+from mh_rag.retrieve.hyperedge_channel import (
+    attach_hyperedge_pool,
+    cooccurrence_entity_seeds,
+)
 from mh_rag.retrieve.models import Seed
 from mh_rag.retrieve.shadow import build_core_seeds, merge_restart_pools
 from mh_rag.store.protocols import GraphStore
@@ -429,13 +433,39 @@ def _try_shadow_seeds(
     cluster_share = (
         float(settings.shadow_cluster_restart_share) if use_clusters else 0.0
     )
-    return merge_restart_pools(
+    merged = merge_restart_pools(
         core,
         anchors,
         list(cluster_seeds) if use_clusters else [],
         core_share=float(settings.shadow_core_restart_share),
         cluster_share=cluster_share,
     )
+    if settings.hyperedge_channel_enabled:
+        hedge = cooccurrence_entity_seeds(store, query_vec, settings)
+        merged = attach_hyperedge_pool(
+            merged, hedge, float(settings.hyperedge_restart_share)
+        )
+    return merged
+
+
+def _finalize_legacy_seeds(
+    seeds: list[Seed],
+    *,
+    store: GraphStore,
+    query_vec: list[float],
+    settings: Settings,
+    hybrid_path: bool,
+) -> list[Seed]:
+    """Dedupe, gate, optional hyperedge attach (skip softmax), else softmax."""
+    seeds = dedupe_seeds(seeds)
+    seeds = gate_seeds(seeds, settings.seed_min_similarity)
+    if settings.hyperedge_channel_enabled and hybrid_path:
+        hedge = cooccurrence_entity_seeds(store, query_vec, settings)
+        if hedge:
+            return attach_hyperedge_pool(
+                seeds, hedge, float(settings.hyperedge_restart_share)
+            )
+    return softmax_seed_similarities(seeds, settings.seed_softmax_temperature)
 
 
 def select_seeds(
@@ -545,9 +575,13 @@ def select_seeds(
         seeds = _ann_seeds(store, query_vec, beam, settings, question)
         if regime == "mixed" and use_clusters:
             seeds.extend(_top_cluster_seeds(memberships, 3))
-    # else: seeds already set to gated cluster list for pure global
+    # else: seeds already set to cluster list for pure global
 
-    seeds = dedupe_seeds(seeds)
-    seeds = gate_seeds(seeds, settings.seed_min_similarity)
-    seeds = softmax_seed_similarities(seeds, settings.seed_softmax_temperature)
+    seeds = _finalize_legacy_seeds(
+        seeds,
+        store=store,
+        query_vec=query_vec,
+        settings=settings,
+        hybrid_path=hybrid_path,
+    )
     return seeds, effective_regime, l3_state, cluster_version, query_arr

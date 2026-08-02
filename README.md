@@ -87,6 +87,16 @@ Flush pending ER adjudications:
 poetry run python scripts/flush_adjudications.py [--batch-size 20] [--once] [--graph NAME]
 ```
 
+After L2 (and after any ER flush), backfill COOCCURRENCE hyperedge embeddings (offline TEI; idempotent):
+
+```powershell
+poetry run python scripts/embed_cooccurrence_hyperedges.py
+```
+
+- Writes `Hyperedge.embed_text` + `Hyperedge.embedding` for `kind=COOCCURRENCE` only
+- Re-run after `flush_adjudications.py` so fingerprints match remapped members
+- Used by the optional hyperedge seed channel (`HYPEREDGE_CHANNEL_ENABLED`; **off** by default — see evals)
+
 ### Layer 3 — clustering (offline)
 
 ```powershell
@@ -140,6 +150,25 @@ poetry run pytest -m integration tests/integration/test_retrieval_integration.py
 poetry run ruff check .
 ```
 
+### Gold evals (offline; Falkor + TEI)
+
+```powershell
+poetry run python evals/run_metrics.py
+poetry run python evals/tune_shadow.py       # Shadow Core α / restart share
+poetry run python evals/tune_hyperedge.py    # COOCCURRENCE channel (vs after_shadow)
+```
+
+Locked retrieval state on this corpus (see `evals/reports/`):
+
+| Knob | Value | Note |
+|------|-------|------|
+| Pack floor / elbow | `0.48` / `0.6` | Tuned earlier |
+| Seed gate / softmax | `0.54` / `0.05` | Tuned earlier |
+| Shadow | **on** (`α=0.5`, core share `0.5`) | Won vs hybrid |
+| Hyperedge channel | **off** | Mechanism shipped; control beat channel on gold |
+
+Reports: `after_shadow.json` (live baseline), `after_hyperedge.json` (control confirm = shadow parity).
+
 ---
 
 ## Typical end-to-end flow
@@ -155,8 +184,9 @@ Outer agent  ←── sources+pages+trace  ←──  POST /retrieve  ←──
 1. `docker compose up -d` + `check_stack.py`  
 2. L1 full corpus  
 3. L2 (budget Azure with `--limit` first)  
-4. `refit_l3.py --force` for small corpora, or `--if-needed` when N ≥ bootstrap  
-5. `uvicorn` → query via Postman / agent  
+4. `embed_cooccurrence_hyperedges.py` (optional but needed if you enable the hyperedge channel)  
+5. `refit_l3.py --force` for small corpora, or `--if-needed` when N ≥ bootstrap  
+6. `uvicorn` → query via Postman / agent  
 
 ---
 
@@ -237,6 +267,12 @@ All settings load from environment / `.env` (see [`.env.example`](.env.example))
 | `SHADOW_CHUNK_ANCHORS` | `2` | Gated TextChunk footholds alongside Core |
 | `SHADOW_CORE_RESTART_SHARE` | `0.5` | Restart mass share for Core (remainder → chunk anchors); tuned on gold |
 | `SHADOW_CLUSTER_RESTART_SHARE` | `0.15` | Mixed regime: mass reserved for cluster seeds |
+| `HYPEREDGE_CHANNEL_ENABLED` | `false` | COOCCURRENCE ANN → Entity MEMBER seeds (PR-09 §2.2); shipped but off — control won gold vs after_shadow |
+| `HYPEREDGE_ANN_K` | `8` | Top-H COOCCURRENCE hyperedges by embedding cosine |
+| `HYPEREDGE_MIN_SIMILARITY` | `0.0` | Floor on hyperedge cosine; `≤0` keeps all ANN hits |
+| `HYPEREDGE_RESTART_SHARE` | `0.15` | Restart mass share for hedge Entities; rest of pools scaled by `(1−share)` |
+| `HYPEREDGE_MEMBERS_PER_HIT` | `4` | Max Entity members taken per hyperedge hit |
+| `HYPEREDGE_MAX_ENTITY_SEEDS` | `8` | Cap on total hedge Entity seeds after dedupe |
 | `LAYER_CROSS_L2_L1` | `0.9` | Entity↔Chunk arc weight |
 | `LAYER_CROSS_L1_L3` | `0.7` | Chunk↔Cluster |
 | `LAYER_CROSS_L2_L3` | `0.6` | Entity↔Cluster |
@@ -271,6 +307,8 @@ All settings load from environment / `.env` (see [`.env.example`](.env.example))
 | Path | Offline (Falkor + TEI)? |
 |------|-------------------------|
 | L1, L3 fit/assign, undo L3, `/retrieve`, `/health` | **Yes** |
+| COOCCURRENCE hyperedge embed backfill | **Yes** |
+| Gold `evals/run_metrics.py` / tune scripts | **Yes** |
 | L2 CLI, adjudication flush, `/ingest` (L2 step) | **No** — needs Azure |
 
 ---
@@ -281,11 +319,13 @@ All settings load from environment / `.env` (see [`.env.example`](.env.example))
 src/mh_rag/
   ingest/          # L1 + L2
   layers/          # L3
-  retrieve/        # evidence pipeline
+  retrieve/        # evidence pipeline (seeds, shadow, hyperedge_channel, pack)
   api/             # FastAPI
   prompts/         # L2 prompts
   store/           # FalkorDB
-scripts/           # check_stack, refit_l3, undo_l3, flush_adjudications
+scripts/           # check_stack, refit_l3, undo_l3, flush_adjudications,
+                   # embed_cooccurrence_hyperedges
+evals/             # gold_queries, run_metrics, tune_*, reports/
 PRs/               # implementation specs PR-00 …
 data/              # corpora (local)
 models/            # L3 artifacts (gitignored)

@@ -185,6 +185,10 @@ def run(
     shadow_alpha: float | None = None,
     shadow_core_restart_share: float | None = None,
     shadow_cluster_restart_share: float | None = None,
+    hyperedge_channel_enabled: bool | None = None,
+    hyperedge_ann_k: int | None = None,
+    hyperedge_min_similarity: float | None = None,
+    hyperedge_restart_share: float | None = None,
     quiet: bool = False,
 ) -> dict[str, Any]:
     """Execute the suite and return the report dict."""
@@ -211,6 +215,14 @@ def run(
         overrides["shadow_core_restart_share"] = shadow_core_restart_share
     if shadow_cluster_restart_share is not None:
         overrides["shadow_cluster_restart_share"] = shadow_cluster_restart_share
+    if hyperedge_channel_enabled is not None:
+        overrides["hyperedge_channel_enabled"] = hyperedge_channel_enabled
+    if hyperedge_ann_k is not None:
+        overrides["hyperedge_ann_k"] = hyperedge_ann_k
+    if hyperedge_min_similarity is not None:
+        overrides["hyperedge_min_similarity"] = hyperedge_min_similarity
+    if hyperedge_restart_share is not None:
+        overrides["hyperedge_restart_share"] = hyperedge_restart_share
     settings = Settings(**overrides)
     store = FalkorStore(settings)
     embedder = TeiEmbedder(settings)
@@ -230,7 +242,9 @@ def run(
             f"floor={settings.evidence_cos_floor}  elbow={settings.evidence_elbow_ratio}  "
             f"seed_min={settings.seed_min_similarity}  seed_tau={settings.seed_softmax_temperature}  "
             f"shadow={settings.shadow_enabled}  alpha={settings.shadow_alpha}  "
-            f"core_share={settings.shadow_core_restart_share}"
+            f"core_share={settings.shadow_core_restart_share}  "
+            f"hedge={settings.hyperedge_channel_enabled}  "
+            f"hedge_share={settings.hyperedge_restart_share}"
         )
         print("-" * 72)
 
@@ -304,6 +318,10 @@ def run(
             "shadow_chunk_anchors": settings.shadow_chunk_anchors,
             "shadow_core_restart_share": settings.shadow_core_restart_share,
             "shadow_cluster_restart_share": settings.shadow_cluster_restart_share,
+            "hyperedge_channel_enabled": settings.hyperedge_channel_enabled,
+            "hyperedge_ann_k": settings.hyperedge_ann_k,
+            "hyperedge_min_similarity": settings.hyperedge_min_similarity,
+            "hyperedge_restart_share": settings.hyperedge_restart_share,
             "rwr_iterations": settings.rwr_iterations,
             "beam_min": settings.beam_min,
             "beam_max": settings.beam_max,
@@ -429,12 +447,39 @@ def main() -> None:
         default=None,
         help="override shadow_cluster_restart_share",
     )
+    parser.add_argument(
+        "--hyperedge-enabled",
+        type=str,
+        default=None,
+        help="override hyperedge_channel_enabled (true/false)",
+    )
+    parser.add_argument(
+        "--hyperedge-ann-k",
+        type=int,
+        default=None,
+        help="override hyperedge_ann_k",
+    )
+    parser.add_argument(
+        "--hyperedge-min-sim",
+        type=float,
+        default=None,
+        help="override hyperedge_min_similarity",
+    )
+    parser.add_argument(
+        "--hyperedge-share",
+        type=float,
+        default=None,
+        help="override hyperedge_restart_share",
+    )
     args = parser.parse_args()
     types = {t.strip() for t in args.types.split(",")} if args.types else None
     output = None if args.no_output else args.output
     shadow_flag: bool | None = None
     if args.shadow_enabled is not None:
         shadow_flag = args.shadow_enabled.strip().lower() in ("1", "true", "yes", "on")
+    hedge_flag: bool | None = None
+    if args.hyperedge_enabled is not None:
+        hedge_flag = args.hyperedge_enabled.strip().lower() in ("1", "true", "yes", "on")
     run(
         args.gold,
         output,
@@ -448,6 +493,10 @@ def main() -> None:
         shadow_alpha=args.shadow_alpha,
         shadow_core_restart_share=args.shadow_core_share,
         shadow_cluster_restart_share=args.shadow_cluster_share,
+        hyperedge_channel_enabled=hedge_flag,
+        hyperedge_ann_k=args.hyperedge_ann_k,
+        hyperedge_min_similarity=args.hyperedge_min_sim,
+        hyperedge_restart_share=args.hyperedge_share,
     )
 
 

@@ -90,6 +90,14 @@ class Settings(BaseSettings):
     shadow_chunk_anchors: int = 2
     shadow_core_restart_share: float = 0.5
     shadow_cluster_restart_share: float = 0.15  # mixed three-pool only
+    # COOCCURRENCE hyperedge channel (PR-09 §2.2). Mechanism shipped; control won
+    # gold vs after_shadow — keep disabled. Re-enable only after a better recipe.
+    hyperedge_channel_enabled: bool = False
+    hyperedge_ann_k: int = 8
+    hyperedge_min_similarity: float = 0.0
+    hyperedge_restart_share: float = 0.15
+    hyperedge_members_per_hit: int = 4
+    hyperedge_max_entity_seeds: int = 8
     layer_cross_l2_l1: float = 0.9
     layer_cross_l1_l3: float = 0.7
     layer_cross_l2_l3: float = 0.6
