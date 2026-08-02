@@ -26,12 +26,32 @@ def cosine_similarity(a: NDArray, b: NDArray) -> float:
     return float(np.dot(ua, ub))
 
 
+def minmax_normalize(values: list[float]) -> list[float]:
+    """Min-max scale to ``[0, 1]`` within a pool; constant/empty → mid ``0.5``.
+
+    When ``max - min <= 1e-12`` (including a single value), every entry maps to
+    ``0.5`` so the feature is neutral and does not invent fake order.
+    """
+    if not values:
+        return []
+    lo = min(values)
+    hi = max(values)
+    span = hi - lo
+    if span <= 1e-12:
+        return [0.5 for _ in values]
+    return [(float(v) - lo) / span for v in values]
+
+
 def candidate_score(
     vector_similarity: float,
     rwr_mass: float,
     linked_to_seed_entity: bool,
 ) -> float:
-    """PR-07 score: ``0.5*cos + 0.4*rwr + 0.1*entity_link``."""
+    """Weighted mix ``0.5*cos + 0.4*rwr + 0.1*entity_link``.
+
+    ``pack_sources`` passes pool min-max normalized cos/RWR in ``[0, 1]``
+    (degenerate mid ``0.5``). The function itself is pure arithmetic.
+    """
     link = 1.0 if linked_to_seed_entity else 0.0
     return 0.5 * float(vector_similarity) + 0.4 * float(rwr_mass) + 0.1 * link
 
@@ -44,18 +64,19 @@ def pack_sources(
 ) -> list[PackedSource]:
     """Greedy MMR + token-knapsack pack of TextChunk candidates.
 
-    Drop chunks with query cosine below ``evidence_cos_floor``. Sort by score
-    descending (never ``score/tokens`` — token count is only a budget fit
-    check), then pack while ``score >= evidence_elbow_ratio * best``
-    (ratio ``<= 0`` disables the relative cut). Skip chunks that exceed
-    remaining budget or are near-duplicates (cosine with any packed embedding
-    ``> mmr_reject_cosine``).
+    Drop chunks with raw query cosine below ``evidence_cos_floor``. Min-max
+    normalize cos and ``rwr_mass`` within that surviving pool, then score with
+    ``0.5/0.4/0.1``. Sort by score descending (never ``score/tokens`` — token
+    count is only a budget fit check), then pack while
+    ``score >= evidence_elbow_ratio * best`` (ratio ``<= 0`` disables the
+    relative cut). Skip chunks that exceed remaining budget or are
+    near-duplicates (cosine with any packed embedding ``> mmr_reject_cosine``).
     """
     query = _l2_normalize(np.asarray(query_embedding, dtype=np.float64))
     cos_floor = float(settings.evidence_cos_floor)
     elbow_ratio = float(settings.evidence_elbow_ratio)
 
-    scored: list[tuple[float, CandidateChunk]] = []
+    pool: list[tuple[CandidateChunk, float]] = []
     for cand in candidates:
         if cand.node.label != "TextChunk":
             continue
@@ -65,11 +86,20 @@ def pack_sources(
         cos = cosine_similarity(query, np.asarray(emb, dtype=np.float64))
         if cos < cos_floor:
             continue
-        score = candidate_score(cos, cand.rwr_mass, cand.linked_to_seed_entity)
-        scored.append((score, cand))
+        pool.append((cand, cos))
 
-    if not scored:
+    if not pool:
         return []
+
+    norm_cos = minmax_normalize([cos for _, cos in pool])
+    norm_rwr = minmax_normalize([float(cand.rwr_mass) for cand, _ in pool])
+    scored: list[tuple[float, CandidateChunk]] = [
+        (
+            candidate_score(nc, nr, cand.linked_to_seed_entity),
+            cand,
+        )
+        for (cand, _), nc, nr in zip(pool, norm_cos, norm_rwr, strict=True)
+    ]
 
     scored.sort(key=lambda t: (-t[0], t[1].node.id))
     best = scored[0][0]

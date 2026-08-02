@@ -5,7 +5,9 @@ import numpy as np
 from mh_rag.config import Settings
 from mh_rag.retrieve.context import (
     candidate_score,
+    cosine_similarity,
     display_source_header,
+    minmax_normalize,
     pack_sources,
 )
 from mh_rag.retrieve.models import CandidateChunk, DocumentMeta, GraphNode
@@ -50,6 +52,73 @@ def test_candidate_score_weights():
     assert abs(candidate_score(1.0, 1.0, True) - 1.0) < 1e-9
     assert abs(candidate_score(0.0, 0.0, False) - 0.0) < 1e-9
     assert abs(candidate_score(1.0, 0.0, False) - 0.5) < 1e-9
+
+
+def test_minmax_normalize_empty_spread_constant():
+    assert minmax_normalize([]) == []
+    assert minmax_normalize([3.0, 5.0]) == [0.0, 1.0]
+    assert minmax_normalize([2.0, 2.0, 2.0]) == [0.5, 0.5, 0.5]
+    assert minmax_normalize([7.0]) == [0.5]
+
+
+def _unit_at_cos(cos: float) -> list[float]:
+    """2D unit vector with cosine ``cos`` vs query ``[1, 0]``."""
+    s = float(np.sqrt(max(0.0, 1.0 - cos * cos)))
+    return [cos, s]
+
+
+def test_pool_minmax_lets_high_rwr_outrank_cos_plus_entity():
+    """PR-09 §1.3: after pool min-max, high-RWR mid-cos beats high-cos+link.
+
+    Worked example (raw vs post-norm):
+      A cos=0.60 rwr=0.02 link=1 → raw 0.408 (wins raw)
+      B cos=0.58 rwr=0.15 link=0 → raw 0.350
+      C cos=0.50 rwr=0.01 link=0 → raw 0.254 (minmax anchor)
+    After minmax B ≈ 0.80 > A ≈ 0.63.
+    """
+    settings = _settings(
+        token_budget=5000,
+        mmr_reject_cosine=1.0,  # disable near-dup filter; 2D unit vecs are close
+        evidence_cos_floor=0.0,
+        evidence_elbow_ratio=0.0,
+    )
+    query = np.array([1.0, 0.0], dtype=np.float64)
+    docs = {"doc-a": DocumentMeta(title="", path="", mime="")}
+
+    emb_a = _unit_at_cos(0.60)
+    emb_b = _unit_at_cos(0.58)
+    emb_c = _unit_at_cos(0.50)
+    assert abs(cosine_similarity(query, np.asarray(emb_a)) - 0.60) < 1e-9
+    assert abs(cosine_similarity(query, np.asarray(emb_b)) - 0.58) < 1e-9
+    assert abs(cosine_similarity(query, np.asarray(emb_c)) - 0.50) < 1e-9
+
+    raw_a = candidate_score(0.60, 0.02, True)
+    raw_b = candidate_score(0.58, 0.15, False)
+    assert raw_a > raw_b
+
+    cands = [
+        CandidateChunk(
+            _node("A", tokens=10, emb=emb_a),
+            vector_similarity=0.60,
+            rwr_mass=0.02,
+            linked_to_seed_entity=True,
+        ),
+        CandidateChunk(
+            _node("B", tokens=10, emb=emb_b),
+            vector_similarity=0.58,
+            rwr_mass=0.15,
+            linked_to_seed_entity=False,
+        ),
+        CandidateChunk(
+            _node("C", tokens=10, emb=emb_c),
+            vector_similarity=0.50,
+            rwr_mass=0.01,
+            linked_to_seed_entity=False,
+        ),
+    ]
+    packed = pack_sources(cands, query, settings, docs)
+    assert [p.chunk_id for p in packed] == ["B", "A", "C"]
+    assert packed[0].score > packed[1].score
 
 
 def test_pack_respects_token_budget_and_pages():
