@@ -229,6 +229,8 @@ All settings load from environment / `.env` (see [`.env.example`](.env.example))
 | `EVIDENCE_ELBOW_RATIO` | `0.6` | Pack: stop when score &lt; ratio × best; `≤0` disables |
 | `SEED_MIN_SIMILARITY` | `0.54` | ANN seed gate (TextChunk/Entity only); `≤0` disables. Keeps best chunk if all fail. Tuned on gold |
 | `SEED_SOFTMAX_TEMPERATURE` | `0.05` | Softmax τ for RWR restart mass; `≤0` = linear normalize. Tuned on gold |
+| `HYBRID_RRF_K` | `60` | RRF constant for dense+BM25 seed fusion (Cormack et al.) |
+| `HYBRID_BM25_CANDIDATES` | `20` | BM25/fulltext candidate pool size before RRF truncate to beam |
 | `LAYER_CROSS_L2_L1` | `0.9` | Entity↔Chunk arc weight |
 | `LAYER_CROSS_L1_L3` | `0.7` | Chunk↔Cluster |
 | `LAYER_CROSS_L2_L3` | `0.6` | Entity↔Cluster |

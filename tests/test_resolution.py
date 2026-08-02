@@ -72,6 +72,9 @@ class FakeStore:
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:k]
 
+    def fulltext_search(self, label, query, k):
+        return []
+
     def upsert_nodes_with_vector(self, label, key, rows, vector_attribute):
         for row in rows:
             eid = row["id"]

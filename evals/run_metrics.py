@@ -282,6 +282,8 @@ def run(
             "evidence_elbow_ratio": settings.evidence_elbow_ratio,
             "seed_min_similarity": settings.seed_min_similarity,
             "seed_softmax_temperature": settings.seed_softmax_temperature,
+            "hybrid_rrf_k": settings.hybrid_rrf_k,
+            "hybrid_bm25_candidates": settings.hybrid_bm25_candidates,
             "rwr_iterations": settings.rwr_iterations,
             "beam_min": settings.beam_min,
             "beam_max": settings.beam_max,

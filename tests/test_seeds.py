@@ -16,13 +16,28 @@ from mh_rag.retrieve.seeds import (
 
 
 class _FakeStore:
-    def __init__(self, hits: dict[str, list[tuple[str, float]]] | None = None) -> None:
+    def __init__(
+        self,
+        hits: dict[str, list[tuple[str, float]]] | None = None,
+        ft_hits: dict[str, list[tuple[str, float]]] | None = None,
+        embeddings: dict[str, list[float]] | None = None,
+    ) -> None:
         self._hits = hits or {
             "TextChunk": [("c1", 0.9), ("c2", 0.8)],
             "Entity": [("e1", 0.7)],
         }
+        self._ft_hits = ft_hits or {}
+        self._embeddings = embeddings or {}
 
     def query(self, cypher: str, params: dict | None = None):
+        params = params or {}
+        if "n.embedding" in cypher and "UNWIND $ids" in cypher:
+            out = []
+            for nid in params.get("ids", []):
+                emb = self._embeddings.get(str(nid))
+                if emb is not None:
+                    out.append([nid, emb])
+            return out
         return []
 
     def query_one(self, cypher: str, params: dict | None = None):
@@ -30,6 +45,10 @@ class _FakeStore:
 
     def vector_search(self, label: str, attribute: str, vector: list[float], k: int):
         rows = self._hits.get(label, [])
+        return rows[:k]
+
+    def fulltext_search(self, label: str, query: str, k: int):
+        rows = getattr(self, "_ft_hits", {}).get(label, [])
         return rows[:k]
 
     def upsert_nodes(self, label: str, key: str, rows: list[dict]) -> int:
@@ -228,3 +247,103 @@ def test_select_global_without_l3_falls_back_local():
     )
     assert regime == "global_fallback_local"
     assert any(s.label == "TextChunk" for s in seeds)
+
+
+def test_reciprocal_rank_fusion_consensus_and_empty():
+    from mh_rag.retrieve.seeds import reciprocal_rank_fusion
+
+    assert reciprocal_rank_fusion([]) == []
+    assert reciprocal_rank_fusion([[], []]) == []
+    fused = reciprocal_rank_fusion(
+        [["a", "b", "c"], ["c", "d", "a"]],
+        rrf_k=60,
+    )
+    ids = [nid for nid, _ in fused]
+    assert ids[0] in {"a", "c"}
+    assert "b" in ids and "d" in ids
+    tied = reciprocal_rank_fusion([["x"], ["y"]], rrf_k=60)
+    assert [nid for nid, _ in tied] == ["x", "y"]
+
+
+def test_hybrid_bm25_fills_dense_miss():
+    """BM25-only gold id enters seeds with cosine from fetched embedding."""
+    settings = Settings(
+        seed_min_similarity=0.0,
+        seed_softmax_temperature=0.0,
+        hybrid_bm25_candidates=4,
+        hybrid_rrf_k=60,
+    )
+    store = _FakeStore(
+        hits={
+            "TextChunk": [("dense_a", 0.70), ("dense_b", 0.65)],
+            "Entity": [],
+        },
+        ft_hits={
+            "TextChunk": [("gold", 12.0), ("dense_a", 1.0)],
+            "Entity": [],
+        },
+        embeddings={
+            "gold": [1.0, 0.0, 0.0],
+        },
+    )
+    seeds, _, _, _, _ = select_seeds(
+        store=store,
+        embedder=_FakeEmbedder(),
+        settings=settings,
+        question="exact term gold",
+        regime="local",
+        beam=2,
+        l3_available=False,
+    )
+    ids = {s.node_id for s in seeds if s.label == "TextChunk"}
+    assert "gold" in ids
+    by_id = {s.node_id: s.similarity for s in seeds}
+    # After linear normalize, gold (cos=1) gets more restart mass than dense_a (0.70)
+    assert by_id["gold"] > by_id.get("dense_a", 0.0)
+
+
+def test_hybrid_empty_bm25_matches_dense_only():
+    settings = Settings(seed_min_similarity=0.0, seed_softmax_temperature=0.0)
+    store = _FakeStore(
+        hits={
+            "TextChunk": [("c1", 0.9), ("c2", 0.8)],
+            "Entity": [("e1", 0.7)],
+        },
+        ft_hits={},
+    )
+    seeds, _, _, _, _ = select_seeds(
+        store=store,
+        embedder=_FakeEmbedder(),
+        settings=settings,
+        question="q",
+        regime="local",
+        beam=4,
+        l3_available=False,
+    )
+    ids = {s.node_id for s in seeds}
+    assert ids == {"c1", "c2", "e1"}
+
+
+def test_hybrid_gate_still_drops_low_cos():
+    settings = Settings(seed_min_similarity=0.85, seed_softmax_temperature=0.0)
+    store = _FakeStore(
+        hits={
+            "TextChunk": [("strong", 0.90), ("weak", 0.50)],
+            "Entity": [],
+        },
+        ft_hits={
+            "TextChunk": [("weak", 5.0), ("strong", 1.0)],
+            "Entity": [],
+        },
+    )
+    seeds, _, _, _, _ = select_seeds(
+        store=store,
+        embedder=_FakeEmbedder(),
+        settings=settings,
+        question="q",
+        regime="local",
+        beam=4,
+        l3_available=False,
+    )
+    ids = {s.node_id for s in seeds}
+    assert ids == {"strong"}

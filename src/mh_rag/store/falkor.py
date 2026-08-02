@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any
 
 from falkordb import FalkorDB
 
 from mh_rag.config import Settings
 from mh_rag.exceptions import StoreError
+
+logger = logging.getLogger(__name__)
+
+_FULLTEXT_LABELS = frozenset({"TextChunk", "Entity"})
+# RediSearch treats punctuation as operators/separators; strip to bag-of-words.
+_FULLTEXT_NON_WORD = re.compile(r"[^\w\s]+", flags=re.UNICODE)
+_FULLTEXT_WS = re.compile(r"\s+")
+
+
+def sanitize_fulltext_query(text: str) -> str:
+    """Strip punctuation/operators so RediSearch accepts free-text questions."""
+    cleaned = _FULLTEXT_NON_WORD.sub(" ", text or "")
+    return _FULLTEXT_WS.sub(" ", cleaned).strip()
 
 
 def build_upsert_payloads(
@@ -44,7 +59,7 @@ def build_upsert_payloads(
 
 
 class FalkorStore:
-    """Thin FalkorDB client implementing the frozen GraphStore protocol."""
+    """Thin FalkorDB client implementing the GraphStore protocol."""
 
     def __init__(self, settings: Settings) -> None:
         """Connect to FalkorDB and select the configured graph."""
@@ -81,6 +96,29 @@ class FalkorStore:
         )
         rows = self.query(cypher, {"k": k, "vec": vector})
         return [(row[0], float(row[1])) for row in rows]
+
+    def fulltext_search(
+        self, label: str, query: str, k: int
+    ) -> list[tuple[str, float]]:
+        """BM25/fulltext search; returns (node_id, score) ordered by score DESC."""
+        q = sanitize_fulltext_query(query)
+        if not q or k <= 0:
+            return []
+        if label not in _FULLTEXT_LABELS:
+            raise StoreError(f"fulltext_search unsupported label: {label}")
+        cypher = (
+            f"CALL db.idx.fulltext.queryNodes('{label}', $q) "
+            "YIELD node, score "
+            "RETURN node.id, score "
+            "ORDER BY score DESC, node.id ASC "
+            "LIMIT $k"
+        )
+        try:
+            rows = self.query(cypher, {"q": q, "k": int(k)})
+        except StoreError as exc:
+            logger.warning("fulltext_search_failed label=%s err=%s", label, exc)
+            return []
+        return [(str(row[0]), float(row[1])) for row in rows]
 
     def upsert_nodes(self, label: str, key: str, rows: list[dict[str, Any]]) -> int:
         """MERGE nodes of `label` keyed on property `key`; returns rows written."""

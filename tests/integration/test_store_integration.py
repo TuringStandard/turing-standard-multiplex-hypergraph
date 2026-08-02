@@ -72,9 +72,7 @@ def test_fulltext_index_queryable(store):
             }
         ],
     )
-    rows = store.query(
-        "CALL db.idx.fulltext.queryNodes('TextChunk', 'insulin') "
-        "YIELD node RETURN node.id"
-    )
-    ids = {row[0] for row in rows}
+    hits = store.fulltext_search("TextChunk", "insulin", k=5)
+    ids = {nid for nid, _score in hits}
     assert "ft-1" in ids
+    assert hits[0][1] > 0.0

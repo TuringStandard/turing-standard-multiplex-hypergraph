@@ -145,6 +145,9 @@ class _FakeStore:
     def vector_search(self, label, attribute, vector, k):
         return []
 
+    def fulltext_search(self, label, query, k):
+        return []
+
     def upsert_nodes(self, label, key, rows):
         return 0
 

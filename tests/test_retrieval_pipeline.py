@@ -75,6 +75,9 @@ class _FakeStore:
             return [("e1", 0.85)][:k]
         return []
 
+    def fulltext_search(self, label: str, query: str, k: int):
+        return []
+
     def upsert_nodes(self, *args, **kwargs):
         return 0
 
