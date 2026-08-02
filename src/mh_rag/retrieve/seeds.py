@@ -53,6 +53,69 @@ def normalize_seed_similarities(seeds: list[Seed]) -> list[Seed]:
     ]
 
 
+def gate_seeds(seeds: list[Seed], min_similarity: float) -> list[Seed]:
+    """Drop weak ANN seeds; never gate Cluster; keep best TextChunk if needed.
+
+    ``min_similarity <= 0`` is a no-op (returns a shallow copy of ``seeds``).
+
+    Cluster seeds pass through regardless of floor (membership already gated).
+    Among TextChunk/Entity: drop below floor. If every TextChunk would be
+    dropped, keep the single best TextChunk so local queries never dead-end.
+    """
+    if not seeds:
+        return []
+    floor = float(min_similarity)
+    if floor <= 0.0:
+        return list(seeds)
+
+    chunks = [s for s in seeds if s.label == "TextChunk"]
+    entities = [s for s in seeds if s.label == "Entity"]
+
+    kept_chunks = [s for s in chunks if float(s.similarity) >= floor]
+    if chunks and not kept_chunks:
+        best = max(chunks, key=lambda s: (float(s.similarity), s.node_id))
+        kept_chunks = [best]
+    kept_entities = [s for s in entities if float(s.similarity) >= floor]
+
+    # Preserve encounter order among kept seeds (clusters/others always kept).
+    kept_keys = {(s.label, s.node_id) for s in (*kept_chunks, *kept_entities)}
+    out: list[Seed] = []
+    for s in seeds:
+        if s.label in ("TextChunk", "Entity"):
+            if (s.label, s.node_id) in kept_keys:
+                out.append(s)
+        else:
+            out.append(s)
+    return out
+
+
+def softmax_seed_similarities(
+    seeds: list[Seed],
+    temperature: float,
+) -> list[Seed]:
+    """Temperature softmax over similarities → RWR restart mass (sum 1).
+
+    ``temperature <= 0`` falls back to linear :func:`normalize_seed_similarities`.
+    Uses max-subtraction for numerical stability.
+    """
+    if not seeds:
+        return []
+    tau = float(temperature)
+    if tau <= 0.0:
+        return normalize_seed_similarities(seeds)
+
+    sims = [float(s.similarity) for s in seeds]
+    peak = max(sims)
+    weights = [float(np.exp((sim - peak) / tau)) for sim in sims]
+    total = sum(weights)
+    if total <= 0.0 or not np.isfinite(total):
+        return normalize_seed_similarities(seeds)
+    return [
+        Seed(s.node_id, s.label, w / total, s.layer)
+        for s, w in zip(seeds, weights, strict=True)
+    ]
+
+
 def _l2_normalize_row(vec: NDArray) -> NDArray[np.float32]:
     arr = np.asarray(vec, dtype=np.float32).ravel()
     norm = float(np.linalg.norm(arr))
@@ -237,5 +300,7 @@ def select_seeds(
     else:
         raise RetrievalError(f"unknown regime: {regime}")
 
-    seeds = normalize_seed_similarities(dedupe_seeds(seeds))
+    seeds = dedupe_seeds(seeds)
+    seeds = gate_seeds(seeds, settings.seed_min_similarity)
+    seeds = softmax_seed_similarities(seeds, settings.seed_softmax_temperature)
     return seeds, effective_regime, l3_state, cluster_version, query_arr

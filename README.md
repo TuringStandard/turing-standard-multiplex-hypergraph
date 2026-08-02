@@ -227,6 +227,8 @@ All settings load from environment / `.env` (see [`.env.example`](.env.example))
 | `MMR_REJECT_COSINE` | `0.95` | Near-duplicate filter |
 | `EVIDENCE_COS_FLOOR` | `0.48` | Pack: drop chunks with query-cos below this (tuned on gold) |
 | `EVIDENCE_ELBOW_RATIO` | `0.6` | Pack: stop when score &lt; ratio × best; `≤0` disables |
+| `SEED_MIN_SIMILARITY` | `0.54` | ANN seed gate (TextChunk/Entity only); `≤0` disables. Keeps best chunk if all fail. Tuned on gold |
+| `SEED_SOFTMAX_TEMPERATURE` | `0.05` | Softmax τ for RWR restart mass; `≤0` = linear normalize. Tuned on gold |
 | `LAYER_CROSS_L2_L1` | `0.9` | Entity↔Chunk arc weight |
 | `LAYER_CROSS_L1_L3` | `0.7` | Chunk↔Cluster |
 | `LAYER_CROSS_L2_L3` | `0.6` | Entity↔Cluster |
