@@ -1,4 +1,4 @@
-"""Unit tests for evidence packing (MMR + token knapsack)."""
+"""Unit tests for evidence packing (MMR + token knapsack + gates)."""
 
 import numpy as np
 
@@ -36,6 +36,16 @@ def _node(
     )
 
 
+def _settings(**kwargs: object) -> Settings:
+    """Settings with gates off unless overridden (preserves legacy test behavior)."""
+    base = {
+        "evidence_cos_floor": 0.0,
+        "evidence_elbow_ratio": 0.0,
+    }
+    base.update(kwargs)
+    return Settings(**base)  # type: ignore[arg-type]
+
+
 def test_candidate_score_weights():
     assert abs(candidate_score(1.0, 1.0, True) - 1.0) < 1e-9
     assert abs(candidate_score(0.0, 0.0, False) - 0.0) < 1e-9
@@ -43,7 +53,7 @@ def test_candidate_score_weights():
 
 
 def test_pack_respects_token_budget_and_pages():
-    settings = Settings(token_budget=100, mmr_reject_cosine=0.99)
+    settings = _settings(token_budget=100, mmr_reject_cosine=0.99)
     query = np.array([1.0, 0.0, 0.0], dtype=np.float64)
     docs = {"doc-a": DocumentMeta(title="T", path="/tmp/a.pdf", mime="application/pdf")}
     cands = [
@@ -75,14 +85,13 @@ def test_pack_respects_token_budget_and_pages():
     assert packed[0].doc_title == "T"
     assert packed[0].doc_path == "/tmp/a.pdf"
     assert packed[0].doc_mime == "application/pdf"
-    # c1 (60) + c3 (30) fit; c2 (60) does not after c1
     ids = {p.chunk_id for p in packed}
     assert "c1" in ids
     assert "c2" not in ids or "c3" not in ids or sum(p.token_count for p in packed) <= 100
 
 
 def test_pack_skips_oversized_chunk():
-    settings = Settings(token_budget=50, mmr_reject_cosine=0.99)
+    settings = _settings(token_budget=50, mmr_reject_cosine=0.99)
     query = np.ones(3)
     docs = {"doc-a": DocumentMeta(title="", path="", mime="")}
     cands = [
@@ -104,10 +113,9 @@ def test_pack_skips_oversized_chunk():
 
 
 def test_mmr_rejects_near_duplicate():
-    settings = Settings(token_budget=500, mmr_reject_cosine=0.95)
+    settings = _settings(token_budget=500, mmr_reject_cosine=0.95)
     query = np.array([1.0, 0.0], dtype=np.float64)
     docs = {"doc-a": DocumentMeta(title="", path="", mime="")}
-    # Nearly identical embeddings
     cands = [
         CandidateChunk(_node("a", tokens=10, emb=[1.0, 0.0]), 0.9, 0.5, False),
         CandidateChunk(_node("b", tokens=10, emb=[0.999, 0.001]), 0.89, 0.4, False),
@@ -118,8 +126,7 @@ def test_mmr_rejects_near_duplicate():
 
 
 def test_pack_output_sorted_by_score_descending():
-    settings = Settings(token_budget=500, mmr_reject_cosine=0.99)
-    # Query aligned with high-score chunk
+    settings = _settings(token_budget=500, mmr_reject_cosine=0.99)
     query = np.array([1.0, 0.0, 0.0], dtype=np.float64)
     docs = {"doc-a": DocumentMeta(title="", path="", mime="")}
     cands = [
@@ -151,7 +158,7 @@ def test_pack_output_sorted_by_score_descending():
 
 
 def test_display_header_includes_pages():
-    settings = Settings(token_budget=100)
+    settings = _settings(token_budget=100)
     query = np.array([1.0, 0.0])
     docs = {"doc-a": DocumentMeta(title="X", path="p", mime="m")}
     packed = pack_sources(
@@ -170,3 +177,96 @@ def test_display_header_includes_pages():
     header = display_source_header(packed[0])
     assert "pages=12-13" in header
     assert "[1]" in header
+
+
+def test_cos_floor_drops_weak_match_despite_high_rwr():
+    """Low query-cos is excluded even when RWR mass is high."""
+    settings = _settings(
+        token_budget=500,
+        mmr_reject_cosine=0.99,
+        evidence_cos_floor=0.35,
+        evidence_elbow_ratio=0.0,
+    )
+    query = np.array([1.0, 0.0], dtype=np.float64)
+    docs = {"doc-a": DocumentMeta(title="", path="", mime="")}
+    cands = [
+        CandidateChunk(
+            _node("strong", tokens=10, emb=[1.0, 0.0]),
+            vector_similarity=0.9,
+            rwr_mass=0.1,
+            linked_to_seed_entity=False,
+        ),
+        CandidateChunk(
+            _node("weak", tokens=10, emb=[0.0, 1.0]),
+            vector_similarity=0.0,
+            rwr_mass=1.0,
+            linked_to_seed_entity=True,
+        ),
+    ]
+    packed = pack_sources(cands, query, settings, docs)
+    assert [p.chunk_id for p in packed] == ["strong"]
+
+
+def test_elbow_stops_score_tail():
+    """Relative cut stops packing once score falls below ratio * best."""
+    settings = _settings(
+        token_budget=5000,
+        mmr_reject_cosine=0.99,
+        evidence_cos_floor=0.0,
+        evidence_elbow_ratio=0.5,
+    )
+    # Query near [1,0]; mid emb has cos ~0.707; weak near orthogonal but
+    # nudged so cos stays above floor=0 while score is clearly below 0.5*best.
+    query = np.array([1.0, 0.0], dtype=np.float64)
+    docs = {"doc-a": DocumentMeta(title="", path="", mime="")}
+    cands = [
+        CandidateChunk(
+            _node("best", tokens=10, emb=[1.0, 0.0]),
+            vector_similarity=1.0,
+            rwr_mass=1.0,
+            linked_to_seed_entity=True,
+        ),
+        CandidateChunk(
+            _node("ok", tokens=10, emb=[0.9, 0.1]),
+            vector_similarity=0.9,
+            rwr_mass=0.9,
+            linked_to_seed_entity=True,
+        ),
+        CandidateChunk(
+            _node("tail", tokens=10, emb=[0.2, 0.98]),
+            vector_similarity=0.2,
+            rwr_mass=0.05,
+            linked_to_seed_entity=False,
+        ),
+    ]
+    packed = pack_sources(cands, query, settings, docs)
+    ids = [p.chunk_id for p in packed]
+    assert "best" in ids
+    assert "tail" not in ids
+
+
+def test_all_below_cos_floor_returns_empty():
+    settings = _settings(
+        token_budget=500,
+        mmr_reject_cosine=0.99,
+        evidence_cos_floor=0.35,
+        evidence_elbow_ratio=0.5,
+    )
+    query = np.array([1.0, 0.0], dtype=np.float64)
+    docs = {"doc-a": DocumentMeta(title="", path="", mime="")}
+    cands = [
+        CandidateChunk(
+            _node("a", tokens=10, emb=[0.0, 1.0]),
+            0.0,
+            1.0,
+            True,
+        ),
+        CandidateChunk(
+            _node("b", tokens=10, emb=[0.1, 0.9]),
+            0.1,
+            0.5,
+            False,
+        ),
+    ]
+    packed = pack_sources(cands, query, settings, docs)
+    assert packed == []
